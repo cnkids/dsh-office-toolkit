@@ -1,13 +1,15 @@
-# dsh-office-tools
+# dsh-office-toolkit
 
 DeepSeek Harness(DSH)**宿主插件**:给 AI 智能体增加读写 Word / Excel 的工具。**跨平台**(macOS / Windows / Linux),核心功能纯 JavaScript 实现,不需要安装 Office 或 LibreOffice。
 
-> 版本 0.2.3 — **安全热点清零**:移除全部可能触发超线性回溯(super-linear backtracking,即 ReDoS)的正则,单元格引用 / 范围 / HTML / XML / ODT 的标签与属性解析全部改为**一次前向线性扫描**(新增 `lib/core/markup.js`)。SonarQube 安全热点 8 → **0**,缺陷、漏洞、代码异味均为 **0**,可靠性 · 安全性 · 可维护性全 A。
+> 版本 0.3.0 — 包名由 `dsh-office-tools` 改为 **`dsh-office-toolkit`**(npm 上原名已被第三方占用),安装命令与 bundle id 随之变化,见「安装」。功能与 0.2.3 一致。
+>
+> 0.2.3 — **安全热点清零**:移除全部可能触发超线性回溯(super-linear backtracking,即 ReDoS)的正则,单元格引用 / 范围 / HTML / XML / ODT 的标签与属性解析全部改为**一次前向线性扫描**(新增 `lib/core/markup.js`)。SonarQube 安全热点 8 → **0**,缺陷、漏洞、代码异味均为 **0**,可靠性 · 安全性 · 可维护性全 A。
 
 <details>
 <summary>历史版本</summary>
 
-- **0.2.2** — 补充**在其它机器上的安装方式**(GitHub / 离线 tarball / 源码目录三种),并说明 npm 上 `dsh-office-tools` 包名已被第三方占用、裸包名会装错包的坑。
+- **0.2.2** — 补充**在其它机器上的安装方式**(GitHub / 离线 tarball / 源码目录三种),并说明 npm 上 `dsh-office-tools` 包名已被第三方占用、裸包名会装错包的坑(0.3.0 起包名已改为 `dsh-office-toolkit`)。
 - **0.2.1** — 修复**同一工作表写多个图表只有第一个可见**的问题(OOXML 规定一个工作表只能有一个 drawing 部件,现已改为多图表共用一个 drawing);同时做了一轮代码质量治理(0 缺陷 / 0 代码异味,可靠性 · 安全性 · 可维护性均 A 级)。
 - **0.2.0** — 新增 Windows 支持:`.doc`/`.rtf`/`.odt` 读取改为纯 JS 优先,外部转换器按平台自动择优,并修正 Windows 路径大小写不敏感判定。
 
@@ -52,13 +54,13 @@ Windows 上**不装任何 Office 软件**也能:读 `.doc/.rtf/.odt`、读写 `.
 
 ## 安装
 
-插件包位于工作区 `dsh-office-tools/`,用 DSH 自带命令安装到 web profile:
+包名是 **`dsh-office-toolkit`**;本仓库目录名与 GitHub 仓库名仍是 `dsh-office-tools`(没改仓库)。用 DSH 自带命令安装到 web profile:
 
 ```sh
 dsh plugin --profile web add file:/Users/cnkids/Project/ElectronProj/dsh-office-tools
 ```
 
-该命令会在 `~/.dsh/profiles/web` 里执行 `pnpm add`,并把 `dsh-office-tools` 自动追加到 `dsh.profile.bundles`。
+该命令会在 `~/.dsh/profiles/web` 里执行 `pnpm add`,并把**包名** `dsh-office-toolkit` 自动追加到 `dsh.profile.bundles`。
 
 **必须重启 `dsh web`(或重开 DeepSeek Harness 桌面端),然后新建会话**,新工具才会出现在智能体的工具列表里 —— `bundles` 只在启动时读取。
 
@@ -67,7 +69,7 @@ dsh plugin --profile web add file:/Users/cnkids/Project/ElectronProj/dsh-office-
 ```sh
 cd ~/.dsh/profiles/web
 pnpm add file:/Users/cnkids/Project/ElectronProj/dsh-office-tools
-# 再把 "dsh-office-tools" 追加到 package.json 的 dsh.profile.bundles 数组
+# 再把 "dsh-office-toolkit" 追加到 package.json 的 dsh.profile.bundles 数组
 ```
 
 验证(不会占用端口,可与运行中的实例并存):
@@ -76,12 +78,12 @@ pnpm add file:/Users/cnkids/Project/ElectronProj/dsh-office-tools
 dsh --profile web --dump-config | grep -A1 office
 ```
 
-应能看到插件行 `id: dsh-office-tools / name: dsh-office-tools`。
+应能看到插件行 `id: dsh-office-toolkit / name: dsh-office-toolkit`。
 
 卸载:
 
 ```sh
-dsh plugin --profile web remove dsh-office-tools
+dsh plugin --profile web remove dsh-office-toolkit
 ```
 
 ## 在其他机器上安装
@@ -92,22 +94,25 @@ DSH 没有独立的 `install` 子命令,装插件统一走 `dsh plugin --profile
 
 ```sh
 dsh plugin --profile web add github:cnkids/dsh-office-tools          # 跟随 main
-dsh plugin --profile web add github:cnkids/dsh-office-tools#v0.2.2   # 锁定版本
+dsh plugin --profile web add github:cnkids/dsh-office-tools#v0.3.0   # 锁定版本
 ```
+
+> 这里写的是 **GitHub 仓库名**(`dsh-office-tools`),不是包名。pnpm 装完后按包内 `package.json` 的
+> **真实包名** `dsh-office-toolkit` 记账,所以 `dsh.profile.bundles` 里出现的是 `dsh-office-toolkit`。
 
 ### 方式二:离线 tarball(内网 / 访问不到 GitHub)
 
 在开发机上打包,把 `.tgz` 拷到目标机器:
 
 ```sh
-npm pack                                                    # 产出 dsh-office-tools-0.2.2.tgz(约 41 KB)
-dsh plugin --profile web add file:/path/to/dsh-office-tools-0.2.2.tgz
+npm pack                                                       # 产出 dsh-office-toolkit-0.3.0.tgz(约 41 KB)
+dsh plugin --profile web add file:/path/to/dsh-office-toolkit-0.3.0.tgz
 ```
 
 ### 方式三:直接指向源码目录(仅开发机之间)
 
 ```sh
-dsh plugin --profile web add link:/path/to/dsh-office-tools
+dsh plugin --profile web add link:/path/to/dsh-office-tools   # 目录名仍叫 dsh-office-tools
 ```
 
 ### 前置条件与注意事项
@@ -115,11 +120,11 @@ dsh plugin --profile web add link:/path/to/dsh-office-tools
 - 目标机器需要 **Node ≥ 18** 和 **pnpm**(`dsh plugin` 只是转发)。git 包与 tarball **都不含 `node_modules`**,依赖仍要从 npm registry 安装 —— 内网环境请先配好镜像(`~/.npmrc` 或 profile 目录下的 `.npmrc`);只读离线环境可先用 `pnpm fetch` 打缓存。
 - 安装完**必须重启 `dsh web`(或重开桌面端)并新建会话**,新工具才会出现在工具列表里 —— `bundles` 只在启动时读取。
 - 本包没有任何 `prepare` / 构建脚本,所以不会被 pnpm 的构建脚本白名单拦截(纯 JS,无需编译)。
-- ⚠️ **不要用 `dsh plugin --profile web add dsh-office-tools`**:npm 上 `dsh-office-tools` 这个名字已被第三方占用(latest 1.0.0,同样是 Office 工具包),裸包名会装到别人的包。若要发布到 registry,请改用 scope 名(如 `@你的用户名/dsh-office-tools`)。
+- 包名 `dsh-office-toolkit` 在 npm 上**可用**(旧的 `dsh-office-tools` 已被第三方占用,latest 1.0.0,同样是 Office 工具包)。当前**尚未发布到 registry**,所以裸包名 `add dsh-office-toolkit` 还装不到,请用上面的 github / tarball / link 三种方式;将来发布后裸名即可用。
 - 校验安装结果(不会占用端口,可与运行中的实例并存):
 
   ```sh
-  dsh --profile web --dump-config | grep -A1 dsh-office-tools
+  dsh --profile web --dump-config | grep -A1 dsh-office-toolkit
   ```
 
 ## 智能体用法示例
@@ -259,8 +264,8 @@ sonar-scanner        # 读取仓库根目录的 sonar-project.properties
 ## 目录结构
 
 ```
-dsh-office-tools/
-├── package.json          # dsh.bundle.patch 指向 cordis.patch.yml
+dsh-office-tools/          # 仓库/目录名;包名是 dsh-office-toolkit
+├── package.json          # name: dsh-office-toolkit;dsh.bundle.patch 指向 cordis.patch.yml
 ├── cordis.patch.yml      # 把插件行插入 profile 插件列表
 ├── lib/
 │   ├── index.js          # 宿主适配层:工具注册、路径解析、沙箱围栏、fs/observed 事件
