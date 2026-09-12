@@ -90,13 +90,54 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 - 写入 `.xlsx` / `.docx` / `.odt` 时会校验输出必须是真正的 OOXML（`PK` 头），否则中止并报 `BAD_OUTPUT_FORMAT` —— 不会留下「扩展名是 Office、内容却是文本」的假文件。
 - `.tsv` 按制表符写出，`.csv` 按逗号写出。
 
+## 读取排版格式（行文规则比对）
+
+对 `.docx` 传 `withFormatting: true`，会在正文之后附一份格式报告，并在 `meta.formatting` 里给出结构化数据：
+
+- **每段**：字体（中文 / 西文）、字号、行距（`固定值 28.8pt` / `1.5 倍` / `单倍`）、首行缩进（`2 字符` / 磅值）、对齐、样式名、是否加粗
+- **页面**：纸张尺寸与上下左右页边距（mm）
+- **文档默认**：`docDefaults` 里的字体、字号、行距
+- **格式分布**：字体 / 字号 / 行距 / 缩进 / 对齐各自的出现次数 —— 主流值即比对基准
+- **偏离主流格式的段落**：逐条列出，便于快速定位不合规处
+
+值和样式都做了继承解析，按 Word 的实际优先级合并：
+
+1. `docDefaults`（文档默认）
+2. **隐式默认样式** —— `w:default="1"` 的段落样式（通常是 `Normal` / `正文`），Word 会套到没写 `w:pStyle` 的段落上
+3. `basedOn` 样式链
+4. 段落直接格式（`w:ind` / `w:spacing` / `w:jc`）
+5. run 级覆盖（一个段落取覆盖文字最多的 run 格式）
+
+**主题字体也会解析**：Word 默认模板用 `w:eastAsiaTheme="minorEastAsia"` 这类引用而不是字体名，插件会读 `word/theme/theme1.xml`，并按 `<a:font script="Hans">` 取出中文实际字体（例如 `宋体` / `等线`），所以「样式给字体、段落自己改行距」这类公文常见写法能读对。
+
+```json
+{ "path": "通知.docx", "withFormatting": true }
+```
+
+报告节选：
+
+```text
+**页面**: 210×297 mm,页边距 上 37 / 下 35 / 左 28 / 右 26 mm
+**文档默认**: 字体 Times New Roman / 等线,字号 10.5pt,行距 继承默认
+
+| # | 段落文字 | 样式 | 对齐 | 行距 | 缩进 | 中文字体 | 字号 | 加粗 |
+| 1 | 关于印发某某管理办法的通知 | 标题 | 居中 | 固定值 28pt | 无 | 方正小标宋简体 | 22pt | 是 |
+| 2 | 各处室、各直属单位: | 正文 | 继承 | 固定值 28pt | 首行 2 字符 | 仿宋_GB2312 | 16pt | — |
+
+**格式分布**(主流值即行文规则比对基准):
+- 中文字体: 仿宋_GB2312 ×2、方正小标宋简体 ×1、黑体 ×1
+- 行距: 固定值 28pt ×5
+```
+
+**限制**：格式提取目前只支持 `.docx`（`.doc` / `.rtf` / `.odt` 会返回一行提示）。表格内的段落也会被列出，并带 `inTable` 标记。
+
 ## 工具参数
 
 以下是 6 个工具注册到 DSH 的完整参数表（由工具 schema 自动导出）。
 
 ### `office_read`
 
-读取 Word / Excel / 表格文件内容（.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv）。用户提到 Word、Excel、文档、表格、.docx、.xlsx 等后缀时一律用本工具。Word/Excel 是二进制格式,通用 read/write/edit 工具处理不了(会报 binary file),必须用本工具。解析方式自动选择：.docx 走 mammoth（Markdown 风格正文/表格）；.doc/.rtf/.odt 优先本机转换器(macOS textutil / LibreOffice / Word)，不可用时回退纯 JS；.xlsx 走 ExcelJS；.xls/.xlsb/.ods/.csv/.tsv 走 SheetJS（纯 JS，全平台可用）。Excel 以 TSV 代码块返回，可用 sheets/range/maxRows 分段读取大表。
+读取 Word / Excel / 表格文件内容（.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv）。用户提到 Word、Excel、文档、表格、.docx、.xlsx 等后缀时一律用本工具。Word/Excel 是二进制格式,通用 read/write/edit 工具处理不了(会报 binary file),必须用本工具。解析方式自动选择：.docx 走 mammoth（Markdown 风格正文/表格）；.doc/.rtf/.odt 优先本机转换器(macOS textutil / LibreOffice / Word)，不可用时回退纯 JS；.xlsx 走 ExcelJS；.xls/.xlsb/.ods/.csv/.tsv 走 SheetJS（纯 JS，全平台可用）。Excel 以 TSV 代码块返回，可用 sheets/range/maxRows 分段读取大表。需要核对字体/字号/行距/缩进等排版格式时，对 .docx 传 withFormatting: true。
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -107,6 +148,7 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 | `maxCols` | integer | — | 仅 Excel：最多读取列数，默认 60 |
 | `maxChars` | integer | — | Word 正文返回字符上限，默认 90000 |
 | `format` | enum: `text` / `html` | — | Word 输出格式：text=Markdown 风格（默认），html=原始 HTML |
+| `withFormatting` | boolean | — | 仅 .docx：额外返回格式报告 —— 每段的字体(中文/西文)、字号、行距(固定值/倍数)、首行缩进、对齐、样式名，以及页面尺寸与页边距；并给出格式分布(主流值)与偏离主流的段落。用于比对行文规则(如"正文三号仿宋、行距固定值 28.8 磅")。结构化数据在 meta.formatting。 |
 
 ### `office_write_docx`
 

@@ -10,6 +10,7 @@ import * as legacy from '../lib/core/legacy.js';
 import * as converters from '../lib/core/converters.js';
 import { htmlToMarkdown, plainTextToHtml } from '../lib/core/md.js';
 import { htmlToDocxBuffer } from '../lib/core/docx-writer.js';
+import { extractDocxFormat, formatReport } from '../lib/core/docx-format.js';
 import { CAPS, assertOfficeBinary } from '../lib/core/util.js';
 import { CORE_DEPS, depFailure, lazyModule, missingDeps } from '../lib/core/deps.js';
 
@@ -729,6 +730,88 @@ await t('回归: 表格转 .tsv 用制表符(此前写成逗号分隔)', async (
   await office.opConvert(csv, back);
   if (!(await readFile(back, 'utf8')).includes(',')) throw new Error('csv 反而不是逗号了');
   return JSON.stringify(text.split('\n')[0]);
+});
+
+await t('格式: 提取字体/字号/行距/缩进(样式继承 + 直接格式优先 + run 覆盖)', async () => {
+  const styles = `<w:styles>
+    <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:eastAsia="等线"/><w:sz w:val="21"/></w:rPr></w:rPrDefault></w:docDefaults>
+    <w:style w:type="paragraph" w:styleId="Body"><w:name w:val="正文"/><w:pPr><w:spacing w:line="576" w:lineRule="exact"/></w:pPr><w:rPr><w:rFonts w:eastAsia="仿宋_GB2312"/><w:sz w:val="32"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="标题"/><w:basedOn w:val="Body"/><w:pPr><w:jc w:val="center"/></w:pPr><w:rPr><w:rFonts w:eastAsia="方正小标宋简体"/><w:sz w:val="44"/><w:b/></w:rPr></w:style>
+  </w:styles>`;
+  const doc = `<w:document><w:body>
+    <w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>关于印发某某办法的通知</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="Body"/><w:ind w:firstLineChars="200"/></w:pPr><w:r><w:t>正文段落</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="Body"/><w:spacing w:line="360" w:lineRule="auto"/><w:ind w:firstLineChars="200"/></w:pPr><w:r><w:rPr><w:rFonts w:eastAsia="黑体"/><w:sz w:val="28"/></w:rPr><w:t>小标题</w:t></w:r></w:p>
+    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="2098" w:bottom="1984" w:left="1587" w:right="1474"/></w:sectPr>
+  </w:body></w:document>`;
+  const f = extractDocxFormat(doc, styles);
+  const [title, body, override] = f.paragraphs;
+  const bad = [];
+  if (title.fontEastAsia !== '方正小标宋简体' || title.sizePt !== 22 || title.bold !== true) bad.push('标题 run 格式(继承自 basedOn 链)');
+  if (title.alignment !== '居中') bad.push('标题居中');
+  if (body.fontEastAsia !== '仿宋_GB2312' || body.sizePt !== 16) bad.push('正文字体(来自样式)');
+  if (body.lineSpacing?.rule !== 'exact' || body.lineSpacing.pt !== 28.8) bad.push('固定值行距 28.8pt');
+  if (body.firstLineChars !== 2) bad.push('首行缩进 2 字符');
+  if (override.fontEastAsia !== '黑体' || override.sizePt !== 14) bad.push('直接 run 覆盖');
+  if (override.lineSpacing?.rule !== 'auto' || override.lineSpacing.lines !== 1.5) bad.push('段落直接改行距为 1.5 倍');
+  if (f.page?.marginsMm?.top !== 37 || f.page?.widthMm !== 210) bad.push('页面与页边距');
+  if (bad.length) throw new Error('提取错误: ' + bad.join('、'));
+  if (!formatReport(f).includes('偏离主流格式的段落')) throw new Error('报告缺少偏离检查');
+  return `${f.paragraphs.length} 段 + 页面,9 项断言通过`;
+});
+
+await t('格式: office_read(withFormatting) 返回报告与 meta.formatting', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const PizZip = (await import('pizzip')).default;
+  const base = new PizZip(await htmlToDocxBuffer('<p>占位</p>'));
+  const zip = new PizZip(base.generate({ type: 'nodebuffer' }));
+  zip.file('word/styles.xml', `<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:eastAsia="等线"/><w:sz w:val="21"/></w:rPr></w:rPrDefault></w:docDefaults>
+    <w:style w:type="paragraph" w:styleId="Body"><w:name w:val="正文"/><w:pPr><w:spacing w:line="576" w:lineRule="exact"/></w:pPr><w:rPr><w:rFonts w:eastAsia="仿宋_GB2312"/><w:sz w:val="32"/></w:rPr></w:style></w:styles>`);
+  zip.file('word/document.xml', `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+    <w:p><w:pPr><w:pStyle w:val="Body"/><w:ind w:firstLineChars="200"/></w:pPr><w:r><w:t>格式比对样例</w:t></w:r></w:p>
+    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="2098" w:bottom="1984" w:left="1587" w:right="1474"/></w:sectPr>
+  </w:body></w:document>`);
+  const p = join(outDir, 'format-check.docx');
+  await writeFile(p, zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  const r = await office.opRead(p, { withFormatting: true });
+  if (!r.content.includes('格式报告')) throw new Error('正文没有格式报告');
+  if (!r.content.includes('仿宋_GB2312') || !r.content.includes('固定值 28.8pt')) throw new Error('报告缺少字体/行距');
+  const fm = r.meta.formatting;
+  if (fm?.paragraphs.length !== 1) throw new Error('meta.formatting 缺失');
+  if (fm.paragraphs[0].fontEastAsia !== '仿宋_GB2312' || fm.paragraphs[0].sizePt !== 16) throw new Error('结构化数据不对');
+  if (fm.page.marginsMm.top !== 37) throw new Error('页边距缺失');
+  if (fm.truncated !== false) throw new Error('截断标记不对');
+  // 不传参数时不应出现格式报告
+  const plain = await office.opRead(p, {});
+  if (plain.content.includes('格式报告')) throw new Error('未传 withFormatting 却返回了格式报告');
+  return `报告 + meta(${fm.paragraphs.length} 段 / 页边距 ${fm.page.marginsMm.top}mm) 正确`;
+});
+
+await t('格式: 主题字体与隐式默认样式(Word 默认模板的真实写法)', async () => {
+  // Word 模板的典型写法:w:default="1" 的段落样式 + 主题字体引用
+  const styles = `<w:styles>
+    <w:style w:type="paragraph" w:default="1" w:styleId="1"><w:name w:val="Normal"/>
+      <w:pPr><w:spacing w:line="360" w:lineRule="auto"/></w:pPr>
+      <w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia"/><w:sz w:val="24"/></w:rPr></w:style>
+    <w:style w:type="character" w:default="1" w:styleId="4"><w:name w:val="Default Paragraph Font"/></w:style>
+  </w:styles>`;
+  const theme = `<a:theme><a:themeElements><a:fontScheme>
+    <a:majorFont><a:latin typeface="Cambria"/><a:ea typeface=""/><a:font script="Hans" typeface="黑体"/></a:majorFont>
+    <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:font script="Hans" typeface="宋体"/></a:minorFont>
+  </a:fontScheme></a:themeElements></a:theme>`;
+  // 注意:段落没有 w:pStyle,靠 w:default="1" 隐式套用
+  const doc = `<w:document><w:body><w:p><w:r><w:t>没有显式样式的段落</w:t></w:r></w:p></w:body></w:document>`;
+  const f = extractDocxFormat(doc, styles, theme);
+  const p = f.paragraphs[0];
+  if (p.styleName !== 'Normal') throw new Error('隐式默认样式未生效: ' + p.styleName);
+  if (p.fontAscii !== 'Calibri') throw new Error('西文主题字体未解析: ' + p.fontAscii);
+  if (p.fontEastAsia !== '宋体') throw new Error('中文主题字体未解析(应取 script="Hans"): ' + p.fontEastAsia);
+  if (p.sizePt !== 12) throw new Error('字号未继承默认样式: ' + p.sizePt);
+  if (p.lineSpacing?.lines !== 1.5) throw new Error('行距未继承默认样式: ' + JSON.stringify(p.lineSpacing));
+  // 没有主题文件时不应崩,且不回退成 undefined
+  const noTheme = extractDocxFormat(doc, styles);
+  if (noTheme.paragraphs[0].styleName !== 'Normal') throw new Error('无主题时默认样式仍应生效');
+  return '默认样式 + Calibri/宋体(script=Hans) + 12pt + 1.5 倍行距 均正确';
 });
 
 const failed = results.filter((r) => !r.ok);
