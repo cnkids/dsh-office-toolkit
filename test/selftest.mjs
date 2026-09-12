@@ -929,6 +929,70 @@ await t('契约: 调用方参数被冻结时所有操作都不得出错(DSH 宿�
   return `${calls.length} 个操作在冻结参数下全部正常,且参数未被改写`;
 });
 
+/** 按给定改写方式生成一个变体 docx。 */
+async function variantDocx(base, cfg) {
+  const PizZip = (await import('pizzip')).default;
+  const out = new PizZip();
+  for (const [name, entry] of Object.entries(base.files)) {
+    if (entry.dir) continue;
+    const isRef = name.endsWith('.rels') || name.endsWith('[Content_Types].xml');
+    const content = cfg.rewriteRefs && isRef
+      ? Buffer.from(cfg.rewriteRefs(entry.asText()), 'utf8')
+      : entry.asNodeBuffer();
+    out.file(cfg.rename(name), content);
+  }
+  return out.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+await t('兼容: 部件名大小写/反斜杠不同(Windows 常见)也能读', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const PizZip = (await import('pizzip')).default;
+  const base = new PizZip(await word.writeDocx({ markdown: '# 标题\n\n大小写测试正文' }));
+  // 重点覆盖「条目名与引用它的 .rels/Content_Types 写法一致但都不规范」:
+  // 只改条目名会让两边对不上,反而更糟 —— 早先的版本就是漏了这种。
+  const variants = {
+    '全大写目录': { rename: (n) => n.replace(/^word\//, 'Word/').replace('document.xml', 'Document.xml') },
+    '大小写+反斜杠混合': { rename: (n) => n.replace(/^word\//, 'Word\\').replace('document.xml', 'Document.XML') },
+    '仅反斜杠': { rename: (n) => n.replaceAll('/', '\\') },
+    '条目与引用均为反斜杠': {
+      rename: (n) => n.replaceAll('/', '\\'),
+      rewriteRefs: (text) => text.replaceAll('word/', 'word\\').replaceAll('xl/', 'xl\\'),
+    },
+    '条目与引用均为大写': {
+      rename: (n) => n.replace(/^word\//, 'Word/'),
+      rewriteRefs: (text) => text.replaceAll('word/', 'Word/'),
+    },
+  };
+  let at = 0;
+  for (const [label, cfg] of Object.entries(variants)) {
+    at += 1;
+    const p = join(outDir, `case-${at}.docx`);
+    await writeFile(p, await variantDocx(base, cfg));
+    const r = await office.opRead(p, { withFormatting: true });
+    if (!String(r.content).includes('大小写测试正文')) throw new Error(`${label}: 正文没读出来`);
+    if (!r.meta.formatting?.paragraphs?.length) throw new Error(`${label}: 格式未提取`);
+    if (!String(r.content).includes('自动修正')) throw new Error(`${label}: 未提示修正条目名`);
+  }
+  return `${Object.keys(variants).length} 种写法(大写/混合/反斜杠/引用同步)均可读`;
+});
+
+await t('兼容: mammoth 解析不了时用内置解析器兜底(不硬失败)', async () => {
+  const PizZip = (await import('pizzip')).default;
+  const { writeFile } = await import('node:fs/promises');
+  const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const zip = new PizZip(new PizZip(await word.writeDocx({ markdown: '占位' })).generate({ type: 'nodebuffer' }));
+  // 没有 w:body: mammoth 抛 "Could not find the body element"
+  zip.file('word/document.xml', `<w:document ${NS}><w:p><w:r><w:t>兜底正文内容</w:t></w:r></w:p></w:document>`);
+  const p = join(outDir, 'nobody.docx');
+  await writeFile(p, zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  const r = await office.opRead(p, {});
+  if (!String(r.content).includes('兜底正文内容')) throw new Error('兜底也没读出来: ' + String(r.content).slice(0, 80));
+  if (r.meta?.reader !== undefined) throw new Error('meta.reader 不该出现在这个层级');
+  const hr = await office.opRead(p, { format: 'html' });
+  if (!String(hr.html || hr.content).includes('兜底正文内容')) throw new Error('html 输出缺失');
+  return 'mammoth 失败后内置解析器成功兜底';
+});
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n===== 结果: ${results.length - failed.length}/${results.length} 通过 =====`);
 if (failed.length) {

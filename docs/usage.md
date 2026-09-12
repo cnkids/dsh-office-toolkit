@@ -8,7 +8,9 @@
 
 | 情况 | 表现 |
 | --- | --- |
-| zip 条目名用反斜杠（部分国产工具、或在 Windows 上手工重打包过） | **自动修正条目名**后正常读取，并在结果里提示修正了几个；mammoth / ExcelJS 本来会直接报「不是有效的 docx」 |
+| zip 条目名用反斜杠（部分国产工具、或在 Windows 上手工重打包过） | **自动把条目名与引用它的部件（`[Content_Types].xml`、`*.rels`）一起改成规范写法**后读取，并提示修正了几处；mammoth / ExcelJS 本来会直接报「不是有效的 docx」 |
+| 部件名大小写不同（`Word/Document.xml`、`WORD\DOCUMENT.XML`） | 同上按规范名归一化后读取。Windows 文件系统不分大小写，那里的工具常这么写 |
+| mammoth 认不出这个文件（找不到主文档部件或没有 body） | 先用 PizZip 重新打包再试；仍失败则用**内置解析器**从 `word/document.xml` 取正文，保证「能开 zip 就读得出字」，并在 `meta.reader` 标明用了哪种读法 |
 | 后缀 `.doc`，内容其实是 `.docx` | 按真实内容当 docx 读，并提示「文件内容其实是 .docx」 |
 | 后缀 `.docx`，内容其实是老的 OLE `.doc` | 按老格式读取，提示实际格式，不再报「docx 无法解压」 |
 | 后缀 `.xlsx`，内容其实是 CSV / TSV 文本 | 按分隔符文本读取，提示实际格式 |
