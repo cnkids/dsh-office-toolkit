@@ -40,6 +40,12 @@ const ctx = {
 const mod = await import('../lib/index.js');
 mod.apply(ctx);
 
+// 模拟 DSH 宿主:传给工具的参数对象是冻结的,插件不得改动调用方参数
+for (const tool of registered.values()) {
+  const run = tool.execute;
+  tool.execute = (args, exec) => run.call(tool, Object.freeze({ ...args }), exec);
+}
+
 const results = [];
 function check(name, cond, detail = '') {
   results.push({ name, ok: Boolean(cond), detail });

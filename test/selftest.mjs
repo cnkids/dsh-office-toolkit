@@ -891,6 +891,44 @@ await t('兼容: zip 里没有 Office 主文档时报错可读(列出实际条�
   return '报 BAD_CONTAINER 并列出实际条目,便于判断文件真身';
 });
 
+await t('契约: 调用方参数被冻结时所有操作都不得出错(DSH 宿主如此传参)', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const F = Object.freeze;
+  // 非标准 zip 会走「加注」分支 —— v0.3.17 正是在这里往冻结对象上写属性而崩溃
+  const PizZip = (await import('pizzip')).default;
+  const out = new PizZip();
+  for (const [name, entry] of Object.entries(new PizZip(await word.writeDocx({ markdown: '# 冻结测试' })).files)) {
+    if (!entry.dir) out.file(name.replaceAll('/', '\\'), entry.asNodeBuffer());
+  }
+  const weird = join(outDir, 'frozen-weird.docx');
+  await writeFile(weird, out.generate({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  const plain = join(outDir, 'frozen-plain.xlsx');
+  await office.opWriteXlsx(plain, { sheets: [{ rows: [['a', 1]] }] });
+
+  const calls = [
+    ['opRead(带注的非标准 zip)', () => office.opRead(weird, F({}), F({}))],
+    ['opRead(普通文件)', () => office.opRead(plain, F({}), F({}))],
+    ['opWriteXlsx', () => office.opWriteXlsx(join(outDir, 'fz.xlsx'), F({ sheets: F([{ rows: F([F(['x'])]) }]) }), F({}))],
+    ['opEditXlsx', () => office.opEditXlsx(plain, F([F({ op: 'set_value', ref: 'D1', value: 'y' })]), F({}))],
+    ['opWriteDocx', () => office.opWriteDocx(join(outDir, 'fz.docx'), F({ markdown: '# x' }), F({}))],
+    ['opFillTemplate', () => office.opFillTemplate(join(outDir, 'fz.docx'), join(outDir, 'fz-out.docx'), F({ a: 'b' }), F({}))],
+    ['opConvert', () => office.opConvert(plain, join(outDir, 'fz.csv'), F({}))],
+    ['opRead(withFormatting)', () => office.opRead(join(outDir, 'fz.docx'), F({ withFormatting: true }), F({}))],
+  ];
+  for (const [label, run] of calls) {
+    try {
+      await run();
+    } catch (err) {
+      throw new Error(`${label} 在冻结参数下失败: ${err.message}`);
+    }
+  }
+  // 冻结的输入对象必须原封不动(不能被塞进 containerNote)
+  const frozen = F({ withFormatting: true });
+  await office.opRead(weird, frozen);
+  if (Object.keys(frozen).join(',') !== 'withFormatting') throw new Error('调用方参数被改写了: ' + JSON.stringify(frozen));
+  return `${calls.length} 个操作在冻结参数下全部正常,且参数未被改写`;
+});
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n===== 结果: ${results.length - failed.length}/${results.length} 通过 =====`);
 if (failed.length) {
