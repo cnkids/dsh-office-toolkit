@@ -6,7 +6,7 @@
 
 **安装**:`dsh plugin --profile web add github:cnkids/dsh-office-toolkit`,重启 `dsh web` 后新建会话。
 
-> **0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
+> **0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
 
 ## 工具
 
@@ -35,15 +35,17 @@
 
 ## 安装
 
-包名与仓库名均为 `dsh-office-toolkit`。
+包名与仓库名均为 `dsh-office-toolkit`。**没装 git 就用第一条**,它不需要 git、不需要手动下载,也永远指向最新版。
 
 | 场景 | 命令 |
 | --- | --- |
-| 跟随 main | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit` |
-| 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.3` |
-| 无 git / 内网 | `npm pack` 后 `dsh plugin --profile web add file:C:/path/dsh-office-toolkit-0.3.3.tgz` |
-| 完全离线 | 拷贝含 `node_modules` 的目录后 `dsh plugin --profile web add link:C:/path/dsh-office-toolkit` |
+| **无 git(推荐)** | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/latest/download/dsh-office-toolkit.tgz` |
+| 有 git · 跟随 main | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit` |
+| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.4` |
+| 完全离线 | 解压 `releases/latest/download/dsh-office-toolkit-offline.zip` 后 `dsh plugin --profile web add link:C:/dsh-office-toolkit` |
 | 本地源码 | `dsh plugin --profile web add link:/path/to/dsh-office-toolkit` |
+
+`releases/latest/download/...` 是 GitHub 的固定别名,每个 Release 都会同时上传**带版本号**和**不带版本号**两份附件,所以这条命令不用随版本改。`.tgz` 只有几十 KB;离线包内含完整 `node_modules`,解压后 `link:` 安装零下载。
 
 `dsh plugin` 会在 profile 目录执行 `pnpm add`,并自动把包名追加进 `dsh.profile.bundles`(本包声明了 `dsh.bundle`,无需手改)。装完**必须重启 `dsh web`(或重开桌面端)并新建会话**才会加载。
 
@@ -52,7 +54,7 @@ dsh --profile web --dump-config | grep -A1 dsh-office-toolkit   # 校验
 dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 ```
 
-目标机器需要 Node ≥ 18 和 pnpm。**`github:` 方式还需要 git 与 GitHub 连通性**;没装 git 就用上面的 `.tgz`(只需能访问 npm registry),完全没外网就用 `link:` + 含 `node_modules` 的目录(`link:` 只建链接,不下载依赖)。裸包名 `add dsh-office-toolkit` 需先发布到 npm(暂未发布)。
+目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm(暂未发布)。
 
 ## 用法示例
 
