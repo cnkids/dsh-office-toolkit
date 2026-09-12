@@ -1,14 +1,42 @@
-# dsh-office-toolkit
+<h1 align="center">dsh-office-toolkit</h1>
 
-> DSH(DeepSeek Harness)宿主插件:让智能体自己读写 Word / Excel —— 不装 Office 也能跑。
+<p align="center">
+  <strong>让 DSH 智能体自己读写 Word / Excel</strong><br>
+  读报告、写台账、改表格、套合同模板、转换旧格式 —— 不装 Office 也能跑。
+</p>
 
-装上这个插件,智能体就能直接读报告、写台账、改表格、套合同模板、转换旧格式,不用你手动搬文件。核心能力是纯 JavaScript(macOS / Windows / Linux 行为一致),只有写出 `.doc` / `.odt` 和转 `.pdf` 才可选地借用本机 LibreOffice 或 Word。
+<p align="center"><sub>DSH(DeepSeek Harness)宿主插件 · 纯 JavaScript · macOS / Windows / Linux 行为一致</sub></p>
 
-**安装**:`dsh plugin --profile web add github:cnkids/dsh-office-toolkit`,重启 `dsh web` 后新建会话。
+<p align="center">
+  <a href="https://github.com/cnkids/dsh-office-toolkit/releases/latest"><img src="https://img.shields.io/github/v/release/cnkids/dsh-office-toolkit?style=flat&amp;label=release&amp;color=4D6BFE" alt="Latest release"></a>
+  <a href="https://github.com/cnkids/dsh-office-toolkit/releases"><img src="https://img.shields.io/github/downloads/cnkids/dsh-office-toolkit/total?style=flat&amp;label=downloads&amp;color=4D6BFE" alt="Total downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A518-339933?style=flat" alt="Node.js 18 or newer">
+  <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat" alt="Supported platforms: macOS, Windows and Linux">
+  <img src="https://img.shields.io/badge/dsh-plugin-4D6BFE?style=flat" alt="DSH plugin">
+</p>
 
-> **0.3.8** 补充「更新」说明:重跑同一条 `add` 即可,三种安装来源均已实测。**0.3.7** 强化工具描述,让智能体优先用本插件读写 Office 文件。**0.3.6** 把 `xlsx` 换成无已知 high 漏洞的 `@e965/xlsx@0.20.3`。**0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
+<p align="center">
+  <a href="#安装"><strong>安装</strong></a>
+  ·
+  <a href="#工具">工具</a>
+  ·
+  <a href="#用法示例">用法示例</a>
+  ·
+  <a href="#常见问题">常见问题</a>
+  ·
+  <a href="https://github.com/cnkids/dsh-office-toolkit/releases/latest">Releases</a>
+</p>
+
+---
+
+给 DSH 装上这个宿主插件,智能体就能直接读文档、写台账、改表格、套合同模板、转换旧格式,不用再手动搬文件。核心能力全部由纯 JavaScript 实现,**不需要安装 Office 或 LibreOffice**;只有写出 `.doc` / `.odt` 和转 `.pdf` 时才可选地借用本机转换器。
+
+插件只做文档读写这一件事:不访问网络、不常驻后台、不修改 DSH 上游代码;所有写入都要先通过 DSH 的沙箱围栏。
 
 ## 工具
+
+注册 6 个工具,由智能体按需调用:
 
 | 工具 | 作用 | 格式 |
 | --- | --- | --- |
@@ -31,17 +59,17 @@
 | doc / rtf / odt 写出 | 仅 rtf | 必需 |
 | 转 pdf | ❌ | 必需 |
 
-外部转换器自动探测:macOS 用系统自带 `textutil`;Windows / Linux 用 LibreOffice `soffice`,Windows 装了 Word 时改用 Word COM。**Windows 上不装任何 Office 也能读写 docx/xlsx/xls/csv、编辑表格、加图表、套模板。**
+外部转换器按平台自动探测:macOS 用系统自带 `textutil`;Windows / Linux 用 LibreOffice `soffice`,Windows 装了 Word 时自动改用 Word COM。**Windows 上不装任何 Office 也能读写 docx/xlsx/xls/csv、编辑表格、加图表、套模板。**
 
 ## 安装
 
-包名与仓库名均为 `dsh-office-toolkit`。**没装 git 就用第一条**,它不需要 git、不需要手动下载,也永远指向最新版。
+包名与仓库名均为 `dsh-office-toolkit`。**没装 git 就用第一条** —— 它不需要 git、不需要手动下载,也永远指向最新版。
 
 | 场景 | 命令 |
 | --- | --- |
 | **无 git(推荐)** | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/latest/download/dsh-office-toolkit.tgz` |
 | 有 git · 跟随 main | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit` |
-| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.4` |
+| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.9` |
 | 完全离线 | 解压 `releases/latest/download/dsh-office-toolkit-offline.zip` 后 `dsh plugin --profile web add link:C:/dsh-office-toolkit` |
 | 本地源码 | `dsh plugin --profile web add link:/path/to/dsh-office-toolkit` |
 
@@ -54,35 +82,23 @@ dsh --profile web --dump-config | grep -A1 dsh-office-toolkit   # 校验
 dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 ```
 
+目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm。
+
 ### 更新
 
-**重跑当初那条 `add` 就是更新** —— pnpm 会重新解析并拉取,`file:` / 固定直链 / `github:` 三种来源都已实测(`file:` 同名文件内容变了会重装;固定直链的 URL 内容变了也会重装;`github:` 分支前进后会解析到新提交)。也可一次更新 profile 内全部依赖:
+**重跑当初那条 `add` 就是更新** —— pnpm 会重新解析并拉取:
 
-```sh
-dsh plugin --profile web add <当初用的 spec>   # 重新安装 = 更新
-dsh plugin --profile web update                # 更新 profile 内全部依赖
-```
+| 安装方式 | 更新行为 |
+| --- | --- |
+| 固定直链(推荐) | URL 内容变更后重跑 `add` 即装新版 |
+| 本地 `.tgz`(`file:`) | 同名文件内容变更后重跑 `add` 即重装 |
+| `github:` / git 分支 | 重跑 `add`,或 `dsh plugin --profile web update` |
+
+一次更新 profile 内全部依赖:`dsh plugin --profile web update`。
 
 - **`link:` 安装不需要 pnpm**:源码目录 `git pull` 即最新。
-- 装了**带版本号**的 spec(`#v0.3.7` 或 `.../releases/download/v0.3.7/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用**不带版本号的固定直链**的原因。
-- **更新后必须重启 `dsh web`(或重开桌面端)并新建会话**,否则看起来像没更新:工具列表与描述只在启动时读取。
-
-目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm(见「开发 → 发布到 npm」,暂未发布)。
-
-## 让智能体优先使用本插件
-
-DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `description` 选择;而内置 `read` / `write` / `edit` 只处理 UTF-8 文本,读 `.docx` 会直接返回 `Error: binary file`,且不会提示该换哪个工具。本插件已把「哪类文件必须用本工具」写在每个描述最前面,并把 `Word / Excel / 文档 / 表格 / .docx / .xlsx` 等词作为触发提示,通常一次就能选对。
-
-想更保险,在**用户级指令文件** `~/.dsh/AGENTS.md` 里加一段(该文件对所有项目、所有会话生效):
-
-```markdown
-## 文件读写
-- 读取 .docx/.doc/.rtf/.odt/.xlsx/.xls/.xlsb/.ods/.csv/.tsv 一律用 `office_read`。
-- 创建/修改用 `office_write_docx` / `office_write_xlsx` / `office_edit_xlsx` / `office_fill_docx_template`,格式转换用 `office_convert`。
-- 不要用通用 `read`/`write`/`edit` 处理这些文件 —— 它们只能处理 UTF-8 文本。
-```
-
-改完重启 `dsh web` 并新建会话生效。
+- 装了**带版本号**的 spec(`#v0.3.9` 或 `.../releases/download/v0.3.9/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用固定直链的原因。
+- **更新后必须重启 `dsh web` 并新建会话**,否则看起来像没更新:工具列表与描述只在启动时读取。
 
 ## 用法示例
 
@@ -126,6 +142,38 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 { "sourcePath": "报告.docx", "outputPath": "报告.pdf" }
 ```
 
+## 让智能体优先使用本插件
+
+DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `description` 选择;而内置 `read` / `write` / `edit` 只处理 UTF-8 文本,读 `.docx` 会直接返回 `Error: binary file`,且不会提示该换哪个工具。本插件已把「哪类文件必须用本工具」写在每个描述最前面,并把 `Word / Excel / 文档 / 表格 / .docx / .xlsx` 等词作为触发提示,通常一次就能选对。
+
+想更保险,在**用户级指令文件** `~/.dsh/AGENTS.md` 里加一段(该文件对所有项目、所有会话生效):
+
+```markdown
+## 文件读写
+- 读取 .docx/.doc/.rtf/.odt/.xlsx/.xls/.xlsb/.ods/.csv/.tsv 一律用 `office_read`。
+- 创建/修改用 `office_write_docx` / `office_write_xlsx` / `office_edit_xlsx` / `office_fill_docx_template`,格式转换用 `office_convert`。
+- 不要用通用 `read`/`write`/`edit` 处理这些文件 —— 它们只能处理 UTF-8 文本。
+```
+
+指令文件是热加载的,保存即生效;插件本身的改动仍需重启 `dsh web`。
+
+## 工作方式
+
+```text
+用户 / 智能体
+   │
+   ├─ office_read · office_write_docx · office_write_xlsx
+   │  office_edit_xlsx · office_fill_docx_template · office_convert
+   │
+   ├─ docx / xlsx ─────────── 纯 JS:mammoth · html-to-docx · exceljs · 自研 OOXML 图表注入
+   ├─ xls / xlsb / ods / csv ─ 纯 JS:SheetJS(@e965/xlsx 0.20.3)
+   └─ doc / rtf / odt ──────── 内置线性解析器优先
+                                 └─ 不可用时 → 本机转换器
+                                    macOS textutil / LibreOffice / Word COM
+   │
+   └─ 写入前经过 DSH 沙箱围栏:仅会话工作区与系统临时目录
+```
+
 ## 参数与限制
 
 **参数**
@@ -144,7 +192,36 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 - 文档内嵌图片只读不写。
 - `office_convert` 源与目标扩展名相同时:路径不同则原样复制,路径相同则直接返回。
 
-## 开发
+## 常见问题
+
+**Windows 上提示 `'git' 不是内部或外部命令`?**
+`github:` 形式的依赖必须调用 git 拉取。改用固定直链那条命令即可绕开,或执行 `winget install --id Git.Git -e` 装上 git。
+
+**内网 / 无外网机器怎么装?**
+下载 `dsh-office-toolkit-offline.zip`(内含完整 `node_modules`),解压后 `link:` 安装,全程零下载。Windows 路径记得用正斜杠:`dsh plugin --profile web add link:C:/dsh-office-toolkit`。
+
+**智能体还是先用了通用 `read`?**
+见「让智能体优先使用本插件」。工具描述已强化,再加一条用户级指令即可稳定命中。
+
+**更新完感觉没变化?**
+插件在 DSH 启动时加载,必须**重启 `dsh web`(或重开桌面端)并新建会话**。校验:`dsh --profile web --dump-config | grep -A1 dsh-office-toolkit`。
+
+**转 PDF 报错?**
+`.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word,纯 JS 不提供 PDF 渲染。
+
+**装完提示几个 deprecated 子依赖?**
+来自 `exceljs@4.4.0`(npm 最新稳定版),逐个核对公告后确认不含适用于本包的安全问题;exceljs 没有更新版本,插件侧也无法用 overrides 干预(pnpm/npm 的 overrides 只在根项目生效)。想让 pnpm 不再打印,安装时加 `--loglevel=error`。
+
+## 依赖与已知告警
+
+- **`xlsx` 用的是 `@e965/xlsx@0.20.3`**:npm 上的 `xlsx` 停在 `0.18.5`,带 Prototype Pollution(`GHSA-4r6h-8v6p-xvw6`)与 ReDoS(`GHSA-5pgg-2g8v-p4x9`)两个 high;SheetJS 早已停止在 npm 发布,修复版只在其官方 CDN。但官方 CDN 的 URL 形式依赖会被 pnpm 的 `blockExoticSubdeps` 判为 exotic 子依赖而拒绝安装,所以改用 npm 上该官方构建的自动转发包(月下载 300 万+,仓库 [sheetjs-npm-publisher](https://github.com/e965/sheetjs-npm-publisher))。包名不同,故代码里写 `import('@e965/xlsx')`。
+- **其余 `npm audit` 告警无法修复**:`image-size`(经 html-to-docx;受影响 `<=2.0.2`,而 npm 最新就是 2.0.2,上游暂无修复版)、`uuid`(经 exceljs;漏洞路径是 v3/v5/v6 带 `buf` 参数,exceljs 只用 v4)。
+
+## 设计说明
+
+解析 OOXML / HTML / ODT 时没有用 `/<[^>]+>/g`、`/([A-Za-z]+\d+)/` 这类正则:它们带无界量词且分支可重叠,在构造输入上会让回溯引擎反复重扫同一段文本,耗时随输入超线性增长(ReDoS,SonarQube `S5852`)。现在统一走 `lib/core/markup.js` 的一次前向扫描,每个字符只被访问有限次,**复杂度是输入长度的 O(n) 上界,与输入内容无关**。`test/converters.test.mjs` 覆盖 20 万字符级畸形输入,要求毫秒级返回或快速报错。
+
+## 本地开发
 
 ```sh
 node test/selftest.mjs        # 核心库 21 项:读写编辑、模板、图表、转换端到端
@@ -169,18 +246,33 @@ npm login --registry https://registry.npmjs.org/   # 首次,需要 npm 账号 + 
 npm publish
 ```
 
-`package.json` 的 `publishConfig.registry` 已固定为官方源,所以 `npm publish` **不受 `~/.npmrc` 里国内镜像的影响**(镜像只能读不能发,不加这行会报 `ENEEDAWAUTH` / 403)。发布后裸包名 `dsh plugin --profile web add dsh-office-toolkit` 即可用。
+`package.json` 的 `publishConfig.registry` 已固定为官方源,所以 `npm publish` **不受 `~/.npmrc` 里国内镜像的影响**(镜像只能读不能发)。发布后裸包名 `dsh plugin --profile web add dsh-office-toolkit` 即可用。
 
-## 设计说明
+### 发版(维护者)
 
-解析 OOXML / HTML / ODT 时没有用 `/<[^>]+>/g`、`/([A-Za-z]+\d+)/` 这类正则:它们带无界量词且分支可重叠,在构造输入上会让回溯引擎反复重扫同一段文本,耗时随输入超线性增长(ReDoS,SonarQube `S5852`)。现在统一走 `lib/core/markup.js` 的一次前向扫描,每个字符只被访问有限次,**复杂度是输入长度的 O(n) 上界,与输入内容无关**。`test/converters.test.mjs` 覆盖 20 万字符级畸形输入,要求毫秒级返回或快速报错。
+1. 改 `package.json` 版本号并同步 README「版本记录」;
+2. 跑上面三个测试脚本;
+3. 提交并打 tag:`git tag -a vX.Y.Z -m "..." && git push origin main vX.Y.Z`;
+4. `npm pack` 产出 `.tgz`;把目录连同 `node_modules` 一起打包成 `-offline.zip`;
+5. 建 Release 并上传 **4 个附件**:带版本号与不带版本号各一份 `.tgz` 与 `-offline.zip`(不带版本号的那两份供 `releases/latest/download/` 固定别名使用)。
 
-## 依赖与已知告警
+> 上传前确认离线包确实含 `node_modules`:`unzip -l ...-offline.zip | grep -c node_modules/` 应有数千条。
 
-- **`xlsx` 用的是 `@e965/xlsx@0.20.3`**:npm 上的 `xlsx` 停在 `0.18.5`,带 Prototype Pollution(`GHSA-4r6h-8v6p-xvw6`)与 ReDoS(`GHSA-5pgg-2g8v-p4x9`)两个 high;SheetJS 早已停止在 npm 发布,修复版只在其官方 CDN。但官方 CDN 的 URL 形式依赖会被 pnpm 的 `blockExoticSubdeps` 判为 exotic 子依赖而拒绝安装,所以改用 npm 上该官方构建的自动转发包(月下载 300 万+,仓库 [sheetjs-npm-publisher](https://github.com/e965/sheetjs-npm-publisher))。包名不同,故代码里 `import('@e965/xlsx')`。
-- **其余 `npm audit` 告警无法修复**:`image-size`(经 html-to-docx;受影响 `<=2.0.2`,而 npm 最新就是 2.0.2,上游暂无修复版)、`uuid`(经 exceljs;漏洞路径是 v3/v5/v6 带 `buf` 参数,exceljs 只用 v4)。
-- **pnpm 提示的 deprecated 子依赖**(`fstream` `glob` `inflight` `lodash.isequal` `rimraf`,有时还有 `uuid`)全部来自 `exceljs@4.4.0` —— npm 上的最新稳定版(2023-10)。逐个核对公告:`inflight` / `rimraf` / `lodash.isequal` 零公告;`glob@7.2.3` 不在其公告范围(公告针对 CLI 10.2–10.4 / 11.0);`fstream@1.0.12` 本身即修复版;`uuid` 的漏洞路径(见上)不可达。**exceljs 没有更新版本,插件侧也无法用 overrides 干预**(pnpm/npm 的 overrides 只在根项目生效,DSH 的根是 profile 目录),所以这些告警无法消除,也不影响安全。
-- 想让 pnpm 不再打印这些告警,安装时加 `--loglevel=error`,或在 `~/.dsh/profiles/web/.npmrc` 写一行 `loglevel=error`(会连进度输出一起隐藏)。
+## 版本记录
+
+| 版本 | 变更 |
+| --- | --- |
+| **0.3.9** | README 改版:居中标题与徽章、导航、常见问题、工作方式图、版本记录 |
+| **0.3.8** | 补充「更新」说明:重跑同一条 `add` 即可更新 |
+| **0.3.7** | 强化工具描述,让智能体优先用本插件读写 Office 文件 |
+| **0.3.6** | `xlsx` 换用 `@e965/xlsx@0.20.3`,消除 2 个 high 漏洞 |
+| **0.3.5** | 补齐 npm 元数据并把发布源固定为官方 registry |
+| **0.3.4** | 新增永不过期的安装直链 `releases/latest/download/...` |
+| **0.3.3** | 补充无 git / 完全离线机器的安装方式 |
+| **0.3.2** | 精简文档并补仓库简介 |
+| **0.3.1** | 仓库名与包名统一为 `dsh-office-toolkit` |
+| **0.3.0** | 安全热点清零:标签与引用解析改为线性扫描 |
+| **0.2.x** | 修复同一工作表多图表丢失;新增 Windows 支持 |
 
 ## 目录结构
 
@@ -200,3 +292,9 @@ lib/core/path-guard.js       跨平台路径围栏
 lib/core/util.js             错误类型、体积上限、截断
 test/                        三个测试脚本
 ```
+
+## 安全与许可证
+
+插件只读写用户指定路径下的文档,不访问网络、不上传内容;所有写入先经 DSH 沙箱围栏校验,越界直接拒绝。发现安全问题请通过 [GitHub 私密漏洞报告](https://github.com/cnkids/dsh-office-toolkit/security/advisories/new) 提交,不要发在公开 Issue 里。
+
+本项目基于 [MIT License](LICENSE) 开源。
