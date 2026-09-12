@@ -2,11 +2,12 @@
 
 DeepSeek Harness(DSH)**宿主插件**:给 AI 智能体增加读写 Word / Excel 的工具。**跨平台**(macOS / Windows / Linux),核心功能纯 JavaScript 实现,不需要安装 Office 或 LibreOffice。
 
-> 版本 0.2.1 — 修复**同一工作表写多个图表只有第一个可见**的问题(OOXML 规定一个工作表只能有一个 drawing 部件,现已改为多图表共用一个 drawing);同时做了一轮代码质量治理(0 缺陷 / 0 代码异味,可靠性 · 安全性 · 可维护性均 A 级)。
+> 版本 0.2.2 — 补充**在其它机器上的安装方式**(GitHub / 离线 tarball / 源码目录三种),并说明 npm 上 `dsh-office-tools` 包名已被第三方占用、裸包名会装错包的坑。功能与 0.2.1 一致。
 
 <details>
 <summary>历史版本</summary>
 
+- **0.2.1** — 修复**同一工作表写多个图表只有第一个可见**的问题(OOXML 规定一个工作表只能有一个 drawing 部件,现已改为多图表共用一个 drawing);同时做了一轮代码质量治理(0 缺陷 / 0 代码异味,可靠性 · 安全性 · 可维护性均 A 级)。
 - **0.2.0** — 新增 Windows 支持:`.doc`/`.rtf`/`.odt` 读取改为纯 JS 优先,外部转换器按平台自动择优,并修正 Windows 路径大小写不敏感判定。
 
 </details>
@@ -81,6 +82,44 @@ dsh --profile web --dump-config | grep -A1 office
 ```sh
 dsh plugin --profile web remove dsh-office-tools
 ```
+
+## 在其他机器上安装
+
+DSH 没有独立的 `install` 子命令,装插件统一走 `dsh plugin --profile <name> add <包 spec>`:它会先初始化 profile,再在 profile 目录里执行 `pnpm add`,最后自动把「声明了 `dsh.bundle` 的依赖」追加进 `dsh.profile.bundles`(本包已声明,所以**不需要手改 bundles**)。
+
+### 方式一:GitHub(推荐,免手动拷贝)
+
+```sh
+dsh plugin --profile web add github:cnkids/dsh-office-tools          # 跟随 main
+dsh plugin --profile web add github:cnkids/dsh-office-tools#v0.2.2   # 锁定版本
+```
+
+### 方式二:离线 tarball(内网 / 访问不到 GitHub)
+
+在开发机上打包,把 `.tgz` 拷到目标机器:
+
+```sh
+npm pack                                                    # 产出 dsh-office-tools-0.2.2.tgz(约 41 KB)
+dsh plugin --profile web add file:/path/to/dsh-office-tools-0.2.2.tgz
+```
+
+### 方式三:直接指向源码目录(仅开发机之间)
+
+```sh
+dsh plugin --profile web add link:/path/to/dsh-office-tools
+```
+
+### 前置条件与注意事项
+
+- 目标机器需要 **Node ≥ 18** 和 **pnpm**(`dsh plugin` 只是转发)。git 包与 tarball **都不含 `node_modules`**,依赖仍要从 npm registry 安装 —— 内网环境请先配好镜像(`~/.npmrc` 或 profile 目录下的 `.npmrc`);只读离线环境可先用 `pnpm fetch` 打缓存。
+- 安装完**必须重启 `dsh web`(或重开桌面端)并新建会话**,新工具才会出现在工具列表里 —— `bundles` 只在启动时读取。
+- 本包没有任何 `prepare` / 构建脚本,所以不会被 pnpm 的构建脚本白名单拦截(纯 JS,无需编译)。
+- ⚠️ **不要用 `dsh plugin --profile web add dsh-office-tools`**:npm 上 `dsh-office-tools` 这个名字已被第三方占用(latest 1.0.0,同样是 Office 工具包),裸包名会装到别人的包。若要发布到 registry,请改用 scope 名(如 `@你的用户名/dsh-office-tools`)。
+- 校验安装结果(不会占用端口,可与运行中的实例并存):
+
+  ```sh
+  dsh --profile web --dump-config | grep -A1 dsh-office-tools
+  ```
 
 ## 智能体用法示例
 
