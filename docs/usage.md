@@ -2,6 +2,12 @@
 
 [← 返回 README](../README.md)
 
+## 安装与更新的可靠性
+
+- `dsh plugin` 是 **pnpm 的薄转发**，用的是 PATH 上的 pnpm；**pnpm < 11.10 会把 URL 形式的依赖直接当作本地缓存**（同一个 `latest` 直链再 `add`，服务端收不到任何请求，`--force` / `remove` + `add` 都无效）。先 `pnpm -v`，低于 11.10 请升级。
+- `releases/latest/download/...` 的内容会随发版变化，任何缓存层都可能留下旧内容。要绝对可靠就用**带版本号的直链**。
+- 装完用启动日志（`[dsh-office-toolkit] vX.Y.Z …`）或 profile 里那份 `package.json` 的 `version` 确认，避免白折腾。
+
 ## 读取兼容性
 
 真实环境里的 Word 文件常常「不标准」，插件在读取前会按**文件真实内容**判断，而不是只信扩展名：

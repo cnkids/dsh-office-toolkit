@@ -79,14 +79,25 @@ dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 
 ### 更新
 
-**重跑同一条 `add` 不一定能拿到新版。** `releases/latest/download/...` 这个 URL 永远不变，而 pnpm 会按 URL 锁定完整性并优先复用本地缓存 —— 典型表现是 `reused … downloaded 0`、命令显示成功、但装的还是旧版（我们就踩过：明明发了新版，机器上仍是 `0.3.7`）。
+**重跑同一条 `add` 不一定能拿到新版**，有两个原因，都要防：
 
-可靠的做法：
+**原因一：pnpm 太旧会把 URL 依赖当成本地缓存，根本不访问服务端。** 实测对照：
 
-| 做法 | 命令 |
-| --- | --- |
-| **推荐：带版本号的直链**（每次发版 URL 都不同，不会被缓存复用） | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/download/vX.Y.Z/dsh-office-toolkit-X.Y.Z.tgz` |
-| 仍想用 `latest` 直链 | 先 `dsh plugin --profile web remove dsh-office-toolkit`，再 `add` 一次；若 pnpm 提示完整性不一致，按它的提示在 profile 目录执行 `pnpm install --update-checksums` |
+| pnpm | 同一个 `latest` 直链再 `add` | 服务端是否收到请求 |
+| --- | --- | --- |
+| 11.2.2 | `reused 1, downloaded 0`，**仍是旧版**（`--force` 与 `remove` + `add` 都无效） | **0 次** |
+| 11.10.0 | `downloaded 1`，升到新版 | HEAD + GET |
+| 11.21.0 | `downloaded 1`，升到新版 | HEAD + GET |
+
+所以先 `pnpm -v`；**低于 11.10 请升级**（`npm i -g pnpm@latest`）。`dsh plugin` 本身只是转发给 PATH 上的 pnpm，不自带版本。
+
+**原因二：`latest` 直链是「内容会变」的 URL。** 任何缓存层（pnpm store、公司代理、CDN）都可能留下旧内容。要绝对可靠就用**带版本号的直链** —— 每次发版 URL 都不同，缓存必然未命中：
+
+```powershell
+dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/download/vX.Y.Z/dsh-office-toolkit-X.Y.Z.tgz
+```
+
+若暂时不能升级 pnpm，就固定用带版本号的直链；已经装过旧版时，先 `dsh plugin --profile web remove dsh-office-toolkit` 再 `add`（`--force` 对旧版 pnpm 无效）。
 
 **装完请确认版本**，否则可能白折腾：
 
@@ -154,7 +165,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **离线包自带依赖吗？** 是。`.offline.zip` 内含完整 `node_modules`，且发布前会用 `node test/offline-check.mjs` 校验每个依赖都落在包内（不允许借用 profile 目录）、依赖树无安装脚本；解压后 `link:` 安装全程零下载。
 
-**更新后版本没变 / 提示 `reused … downloaded 0`？** pnpm 按 URL 复用了缓存，`latest` 直链永远指向同一个 URL，所以不会自动刷新。改用带版本号的直链（`.../releases/download/vX.Y.Z/dsh-office-toolkit-X.Y.Z.tgz`），或先 `dsh plugin --profile web remove dsh-office-toolkit` 再重新 `add`。
+**更新后版本没变 / 提示 `reused … downloaded 0`？** 两种原因：① **pnpm 低于 11.10** 会把 URL 依赖直接当成本地缓存（实测连服务端请求都不发，`--force` 与 `remove` + `add` 也无效）——升级 pnpm 即可；② `latest` 直链是内容可变的 URL，可能被缓存层留下旧内容 —— 改用带版本号的直链（`.../releases/download/vX.Y.Z/dsh-office-toolkit-X.Y.Z.tgz`）最稳。
 
 **怎么确认插件版本 / 更新生效了？** 插件启动时会往 DSH 日志打印一行 `[dsh-office-toolkit] vX.Y.Z 已注册 6 个 Office 工具`；也可以直接看 profile 里那份 `package.json` 的 `version`（`dsh --profile web --dump-config` 能看到 profile 目录）。报错信息里也会带插件版本，便于排查。
 
@@ -179,6 +190,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.21** | 文档补全更新失败的根因（pnpm < 11.10 会复用 URL 依赖缓存，不访问服务端）与彻底解法 |
 | **0.3.20** | 主文档部件按包关系解析（非规范路径也能读）；启动日志与报错带上插件版本 |
 | **0.3.19** | 部件名大小写不同也能读（连同引用一起归一化）；mammoth 认不出时重打包重试、再不行用内置解析器兜底 |
 | **0.3.18** | 修 0.3.17 回归：读取非标准文件时报 `Cannot add property containerNote`（宿主参数是冻结的）；改为不改写调用方参数 |
