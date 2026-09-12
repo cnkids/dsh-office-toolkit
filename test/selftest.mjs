@@ -537,6 +537,58 @@ await t('安全: 临时文件以 0600 写入(不落到公共 tmp 的默认 0644)
   return `${tempWrites.length} 处临时写入都是 0600`;
 });
 
+await t('安全: 解压炸弹 — 声明解压总量超限时拒绝', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const buf = await readFile(docxPath);
+  const saved = CAPS.MAX_UNCOMPRESSED_BYTES;
+  CAPS.MAX_UNCOMPRESSED_BYTES = 1024; // 正常 docx 解压后必然远超 1 KiB
+  try {
+    await word.readDocx(buf);
+    throw new Error('没有拦截超限的解压体积');
+  } catch (err) {
+    if (err.code !== 'ZIP_BOMB_SUSPECTED') throw err;
+    return err.message;
+  } finally {
+    CAPS.MAX_UNCOMPRESSED_BYTES = saved;
+  }
+});
+
+await t('安全: 解压炸弹 — 压缩比异常时拒绝(压缩包本身很小)', async () => {
+  const { default: PizZip } = await import('pizzip');
+  const { readFile } = await import('node:fs/promises');
+  const zip = new PizZip();
+  zip.file('word/document.xml', 'A'.repeat(4 * 1024 * 1024)); // 4 MiB 极度可压缩
+  const bomb = zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+  try {
+    await word.readDocx(bomb);
+    throw new Error('没有拦截高压缩比的压缩包');
+  } catch (err) {
+    if (err.code !== 'ZIP_BOMB_SUSPECTED') throw err;
+    const packed = Buffer.byteLength(bomb);
+    if (packed > 32 * 1024) throw new Error(`测试样本压缩后 ${packed} 字节,不够小,无法证明是压缩比触发`);
+    // 正常文件不能被误伤
+    await word.readDocx(await readFile(docxPath));
+    await excel.readWorkbook(await readFile(xlsxPath));
+    return `${packed} 字节 → 4 MiB 被拒;正常 docx/xlsx 仍可通过`;
+  }
+});
+
+await t('安全: 写入 docx 前剔除图片(不触碰可联网的图片探测栈)', async () => {
+  const cases = [
+    ['<p>前<img src="a.png" alt="图 1">后</p>', '<p>前图 1后</p>'],
+    ['<figure><img src="https://x/y.jpg"><figcaption>说明</figcaption></figure>', '说明'],
+    ['<img src="x" alt="a&amp;b">', 'a&amp;b'],
+    ['<img src="x" alt="<script>alert(1)</script>">', '&lt;script&gt;alert(1)&lt;/script&gt;'],
+  ];
+  for (const [input, want] of cases) {
+    const got = word.stripImages(input);
+    if (got !== want) throw new Error(`${JSON.stringify(input)} → ${JSON.stringify(got)},期望 ${JSON.stringify(want)}`);
+  }
+  const buf = await word.writeDocx({ html: '<p>图片</p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">' });
+  if (!Buffer.isBuffer(buf) || buf.length === 0) throw new Error('剔除图片后仍应能生成 docx');
+  return `${cases.length} 个用例 + 含图片的 HTML 仍生成 docx(${buf.length} 字节)`;
+});
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n===== 结果: ${results.length - failed.length}/${results.length} 通过 =====`);
 if (failed.length) {

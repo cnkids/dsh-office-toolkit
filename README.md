@@ -49,7 +49,7 @@
 
 ## 平台支持
 
-纯 JS 层保证开箱可用,外部转换器只用于提升旧格式保真度。
+纯 JS 层保证开箱可用,外部转换器只用于提升旧格式保真度。需要 **Node ≥ 20**。
 
 | 能力 | 纯 JS | 外部转换器 |
 | --- | --- | --- |
@@ -165,7 +165,7 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
    ├─ office_read · office_write_docx · office_write_xlsx
    │  office_edit_xlsx · office_fill_docx_template · office_convert
    │
-   ├─ docx / xlsx ─────────── 纯 JS:mammoth · html-to-docx · exceljs · 自研 OOXML 图表注入
+   ├─ docx / xlsx ─────────── 纯 JS:mammoth · @turbodocx/html-to-docx · @wekanteam/exceljs · 自研 OOXML 图表注入
    ├─ xls / xlsb / ods / csv ─ 纯 JS:SheetJS(@e965/xlsx 0.20.3)
    └─ doc / rtf / odt ──────── 内置线性解析器优先
                                  └─ 不可用时 → 本机转换器
@@ -182,6 +182,7 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 - 单元格值:数字 / 布尔原样;`=` 开头视为公式;`date:2026-09-09` 写入日期;`num:1,234.5` 强制数字。
 - 样式:`{bold, italic, fontSize, color, fill, align, valign, wrap, numFmt, border}`(颜色 `RRGGBB`)。
 - 大表默认 400 行 × 60 列、Word 正文默认 90000 字符,超出会截断并提示用参数分段读。
+- 输入体积:`.docx` 40 MB、`.xlsx` 60 MB;三者都是 zip,解压后总量超过 **1 GiB** 或压缩比超过 **150:1** 会按「疑似压缩炸弹」拒绝(`ZIP_BOMB_SUSPECTED`)。
 
 **限制**
 
@@ -189,7 +190,7 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 - 一个工作表只能有一个 drawing 部件,因此同表多图表共用一个 drawing(各自独立锚点,可分别拖动)。
 - `.doc` 纯 JS 解析不保留表格与版式;写出 `.doc` / `.odt`、转 `.pdf` 需要 LibreOffice 或 Word。
 - 模板填充只做 `{{变量}}` 替换,不支持循环 / 条件(批量套打多次调用即可)。
-- 文档内嵌图片只读不写。
+- 文档内嵌图片只读不写:写入 `.docx` 时会移除 `<img>`(有 `alt` 文本则保留为正文),不会嵌入图片。
 - `office_convert` 源与目标扩展名相同时:路径不同则原样复制,路径相同则直接返回。
 - CSV / TSV / TXT 按 **UTF-8** 解码(这类格式不自带编码信息);GBK 等其他编码请先转成 UTF-8。
 
@@ -210,13 +211,16 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 **转 PDF 报错?**
 `.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word,纯 JS 不提供 PDF 渲染。
 
-**装完提示几个 deprecated 子依赖?**
-来自 `exceljs@4.4.0`(npm 最新稳定版),逐个核对公告后确认不含适用于本包的安全问题;exceljs 没有更新版本,插件侧也无法用 overrides 干预(pnpm/npm 的 overrides 只在根项目生效)。想让 pnpm 不再打印,安装时加 `--loglevel=error`。
+**装完提示 `Ignored build scripts`?**
+依赖里只有 `@turbodocx/html-to-docx` 带一个 `postinstall`,内容仅仅是打印一条推广文案(读本地 `messages.json`,不下载、不写盘、不执行外部命令)。pnpm 默认就不执行依赖的构建脚本,所以这条提示可以忽略;想少看日志就加 `--loglevel=error`。
 
 ## 依赖与已知告警
 
 - **`xlsx` 用的是 `@e965/xlsx@0.20.3`**:npm 上的 `xlsx` 停在 `0.18.5`,带 Prototype Pollution(`GHSA-4r6h-8v6p-xvw6`)与 ReDoS(`GHSA-5pgg-2g8v-p4x9`)两个 high;SheetJS 早已停止在 npm 发布,修复版只在其官方 CDN。但官方 CDN 的 URL 形式依赖会被 pnpm 的 `blockExoticSubdeps` 判为 exotic 子依赖而拒绝安装,所以改用 npm 上该官方构建的自动转发包(月下载 300 万+,仓库 [sheetjs-npm-publisher](https://github.com/e965/sheetjs-npm-publisher))。包名不同,故代码里写 `import('@e965/xlsx')`。
-- **其余 `npm audit` 告警无法修复**:`image-size`(经 html-to-docx;受影响 `<=2.0.2`,而 npm 最新就是 2.0.2,上游暂无修复版)、`uuid`(经 exceljs;漏洞路径是 v3/v5/v6 带 `buf` 参数,exceljs 只用 v4)。
+- **换用两个维护中的 fork,`npm audit` 归零**(0.3.12):
+  - `exceljs@4.4.0` → **`@wekanteam/exceljs@4.7.3`**([Wekan](https://github.com/wekan/exceljs) 维护的同线 fork)。原版锁定 `uuid@^8.3.0`,而 `uuid` 的 [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) 只在 `11.1.1` 修复;fork 已升到 `uuid@^14`。4.x 同线,API 不变。
+  - `html-to-docx@1.8.0` → **`@turbodocx/html-to-docx@1.23.1`**([TurboDocx](https://github.com/TurboDocx/html-to-docx) 维护的 fork,周下载 9 万+)。原版依赖 `image-size`,而它有 2 个 high DoS 且 **npm 上全部版本都受影响、没有修复版**;fork 换成了 `probe-image-size`。
+  - 两个 fork 都在 npm 与国内镜像上可直接安装,依赖树**反而更小**(207 → 204 包,83.5 → 81.8 MB)。
 
 ## 设计说明
 
@@ -225,11 +229,11 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 ## 本地开发
 
 ```sh
-npm test           # 三个测试脚本:核心库 34 · 跨平台层 16 · 插件适配层 35,共 85 项
+npm test           # 三个测试脚本:核心库 40 · 跨平台层 16 · 插件适配层 36,共 92 项
 npm run coverage   # 同上并统计覆盖率,写出 coverage/lcov.info
 ```
 
-纯 Node 脚本,不需要测试框架。覆盖率(c8):**语句 91.6% / 分支 67.9% / 函数 93.5%**。未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
+纯 Node 脚本,不需要测试框架。覆盖率(c8):**语句 91.8% / 分支 68.7% / 函数 93.7%**。未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
 
 profile 当前是 `link:` 安装,改完源码重启 `dsh web` 即生效;若用 `file:` 安装需重新执行一次 `add` 刷新副本(HMR 不监听插件源码)。
 
@@ -264,6 +268,7 @@ npm publish
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.12** | 安全收口:`npm audit` **归零**(换用 `@wekanteam/exceljs` / `@turbodocx/html-to-docx` 两个维护 fork)、防解压炸弹(解压总量 / 压缩比上限)、写入 `.docx` 前剥离图片 |
 | **0.3.11** | 安全审计:修公式注入 / 符号链接绕过围栏 / 临时文件全局可读,并公开剩余风险 |
 | **0.3.10** | 接入 c8 覆盖率(语句 91.6%);修 3 个 bug:CSV 读出乱码、`office_edit_xlsx` 的 `sheet` 序号基准、日期回读差一天 |
 | **0.3.9** | README 改版:居中标题与徽章、导航、常见问题、工作方式图、版本记录 |
@@ -283,8 +288,8 @@ npm publish
 ```
 lib/index.js                 宿主适配层:工具注册、路径解析、沙箱围栏、fs/observed 事件
 lib/core/office.js           六个操作的编排
-lib/core/word.js             docx 读 / 写 / 模板(mammoth / html-to-docx / docxtemplater)
-lib/core/excel.js            xlsx 读 / 建 / 编辑(exceljs)
+lib/core/word.js             docx 读 / 写 / 模板(mammoth / @turbodocx/html-to-docx / docxtemplater)
+lib/core/excel.js            xlsx 读 / 建 / 编辑(@wekanteam/exceljs)
 lib/core/charts.js           OOXML 图表注入
 lib/core/legacy.js           旧表格格式(SheetJS)
 lib/core/legacy-read.js      纯 JS 解析 doc / rtf / odt
@@ -307,21 +312,23 @@ test/                        三个测试脚本
 | **符号链接绕过写入围栏** | 围栏此前只做词法比较:工作区内一个指向外部的符号链接,能让写入落到沙箱之外 | 围栏同时校验**真实路径**(realpath),绕行会被拒绝 |
 | **临时文件全局可读** | 转换旧格式时会把文档内容写进公共临时目录的 `0644` 文件,同机其他用户可读 | 临时文件显式 `0600` |
 | **正则回溯(ReDoS)** | 构造输入可让宿主进程长时间卡住 | 0.3.0 起所有标签/引用解析改为线性扫描,见「设计说明」 |
+| **解压炸弹** | `.docx` / `.xlsx` / `.odt` 都是 zip,此前只限制压缩包体积,一个几十 KB 的文件可解压出几十 GB,把宿主进程撑爆 | 0.3.12 起解析前先读 zip 中央目录,声明解压总量超过 1 GiB 或压缩比超过 150:1 直接拒绝 |
+| **图片探测 DoS 与外链抓取** | 写 `.docx` 时 html-to-docx 会去探测 `<img>` 的尺寸:旧版走 `image-size`(ICNS / JXL / HEIF 解析有无上限循环,`GHSA-w3rx-r6r6-pgpr`、`GHSA-5p2g-fcmc-qvqq`,**上游至今没有修复版**),新版走 `probe-image-size` → `needle`(会按 `<img src>` 真的发起 HTTP 请求) | 0.3.12 起写入前先剥掉 `<img>` / `<figure>`(`alt` 文本保留) —— 两条路径都不会被触发,插件始终不访问网络 |
 | **`xlsx` 已知漏洞** | Prototype Pollution 与 ReDoS,解析不可信表格时可达 | 0.3.6 起换用 `@e965/xlsx@0.20.3` |
+| **依赖链上的 4 条 `npm audit` 告警** | `image-size` 2 个 high(经 html-to-docx,上游无修复版)+ `uuid` 1 个 moderate(经 exceljs,修复版只在 11.x) | 0.3.12 起换用维护中的 fork(`@turbodocx/html-to-docx`、`@wekanteam/exceljs`),**`npm audit` 归零** |
 
 ### 边界与假设
 
 - **写入围栏由插件自己实现**(`lib/core/path-guard.js` + `lib/index.js`)。`.docx` / `.xlsx` 是二进制,而 DSH 的 `ctx.fs` 只提供 `writeText`,插件只能用 `node:fs` 落盘 —— 所以**这个围栏就是真正的边界**,不存在宿主写入沙箱兜底。
 - 围栏允许写入:DSH 策略给出的 `workspaceRoot`、会话 cwd、`process.cwd()`、系统临时目录。其中 `process.cwd()` 是镜像 DSH 默认沙箱根的兜底 —— 若 `dsh web` 从很宽的目录(例如用户主目录)启动,可写范围会随之变宽,**建议从工作区目录启动**。
 - **读取不做围栏**(与内置 `read` 工具一致):只按扩展名区分,不限制目录;`office_convert` 的源文件同理。
-- 不访问网络、不常驻后台、安装时不执行任何脚本(本包没有 `prepare` / `postinstall`)。
+- 不访问网络:插件自身不发起任何请求,写入 `.docx` 前也会剥掉 `<img>`,因此 `@turbodocx/html-to-docx` 里那套可联网的图片探测栈(`probe-image-size` / `needle`)不会被触发。
+- 不常驻后台。本包自身没有 `prepare` / `postinstall`;依赖树里唯一的安装脚本是 `@turbodocx/html-to-docx` 的 `postinstall`,只打印推广文案(见「常见问题」),且 pnpm 默认不执行依赖构建脚本。
 
 ### 已知且暂不修复
 
-- **解压炸弹**:`.docx` / `.xlsx` / `.odt` 都是 zip,插件限制的是**压缩包体积**(40 / 60 MB),**不限制解压后体积**,而 PizZip / ExcelJS / mammoth 都没有这层保护。处理不可信大文件时请留意内存。
-- **`image-size` 的 2 个 high(DoS)**:经 `html-to-docx` 引入,受影响范围 `<= 2.0.2`,而 npm 上最新就是 2.0.2 —— **上游没有修复版**。
-- **`uuid` 的 1 个 moderate**:经 `exceljs` 引入,漏洞路径是 v3/v5/v6 带 `buf` 参数(该库只用 v4,不可达);且 exceljs 锁定 `^8.3.0`,跨大版本替换风险高。
-- **供应链**:`@e965/xlsx` 是 SheetJS 官方构建在 npm 上的第三方转发(月下载 300 万+),不是官方 publisher;`package-lock.json` 已锁定 integrity。若对此敏感,可改用官方 CDN 的 URL 依赖 —— 但 pnpm 默认的 `blockExoticSubdeps` 会拒绝这种形式。
+- **zip 声明的解压体积可以伪造**:本插件的防护基于 zip 中央目录里的 `uncompressedSize`(以及压缩比)。蓄意构造的压缩包可以把该字段写小,此时仍会在真实解压时膨胀 —— 这层防护抬高的是门槛而**不是硬边界**;真要处理完全不可信的输入,请在独立进程 / 容器里跑并限制内存。
+- **供应链**:`@e965/xlsx` 是 SheetJS 官方构建在 npm 上的第三方转发(月下载 300 万+),不是官方 publisher;`package-lock.json` 已锁定 integrity。若对此敏感,可改用官方 CDN 的 URL 依赖 —— 但 pnpm 默认的 `blockExoticSubdeps` 会拒绝这种形式。`@wekanteam/exceljs`(Wekan)与 `@turbodocx/html-to-docx`(TurboDocx)同样是「官方包停更后的第三方维护 fork」,它们换来的是一条完全干净的 `npm audit`;两者的发布方都是有长期公开仓库的组织,但**这与上游官方包并非同一 publisher**,请自行评估后决定是否接受。
 
 ### 报告安全问题
 
