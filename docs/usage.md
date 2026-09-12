@@ -87,6 +87,8 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 - 图片只读不写：写入 `.docx` 时不嵌入图片，只把 `<img>` 的 `alt` 文本留在正文里。
 - CSV / TSV / TXT 按 **UTF-8** 解码（这类格式不带编码信息），GBK 等其他编码请先转码。
 - `javascript:` / `data:` / `vbscript:` / `file:` 链接在写入 `.docx` 时会降级为纯文本。
+- 写入 `.xlsx` / `.docx` / `.odt` 时会校验输出必须是真正的 OOXML（`PK` 头），否则中止并报 `BAD_OUTPUT_FORMAT` —— 不会留下「扩展名是 Office、内容却是文本」的假文件。
+- `.tsv` 按制表符写出，`.csv` 按逗号写出。
 
 ## 工具参数
 

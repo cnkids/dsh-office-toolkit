@@ -10,7 +10,8 @@ import * as legacy from '../lib/core/legacy.js';
 import * as converters from '../lib/core/converters.js';
 import { htmlToMarkdown, plainTextToHtml } from '../lib/core/md.js';
 import { htmlToDocxBuffer } from '../lib/core/docx-writer.js';
-import { CAPS } from '../lib/core/util.js';
+import { CAPS, assertOfficeBinary } from '../lib/core/util.js';
+import { CORE_DEPS, depFailure, lazyModule, missingDeps } from '../lib/core/deps.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, 'out');
@@ -666,6 +667,68 @@ await t('安全: docx 里的 javascript: 链接降级为纯文本', async () => 
   if (!xml.includes('点我')) throw new Error('链接文字丢失');
   if (!rels.includes('https://ok.example/')) throw new Error('正常链接被误伤');
   return 'javascript: 已丢弃,http(s) 保留';
+});
+
+await t('依赖: 缺包时报错点明包名、用途与修复命令', async () => {
+  const raw = Object.assign(new Error("Cannot find package 'mammoth' imported from /x/y.js"), { code: 'ERR_MODULE_NOT_FOUND' });
+  const err = depFailure(raw, 'Word 读取');
+  if (err.code !== 'MISSING_DEPENDENCY') throw new Error('错误码不对: ' + err.code);
+  if (!err.message.includes('mammoth')) throw new Error('未点明包名: ' + err.message);
+  if (!err.message.includes('读取 .docx')) throw new Error('未说明该依赖的用途');
+  if (!err.message.includes('dsh plugin --profile web add')) throw new Error('未给出修复命令');
+  if (!err.message.includes("Cannot find package 'mammoth'")) throw new Error('未保留原始报错');
+  const other = new Error('boom');
+  if (depFailure(other, 'x') !== other) throw new Error('普通错误被改写');
+  const mod = lazyModule('dsh-这个包不存在-测试用', '测试', ['whatever']);
+  try {
+    await mod.whatever();
+    throw new Error('懒加载没有抛错');
+  } catch (e) {
+    if (e.code !== 'MISSING_DEPENDENCY') throw e;
+  }
+  return '包名 / 用途 / 修复命令 / 原样透传 / 懒加载 均正确';
+});
+
+await t('依赖: 加载时自检能列出缺失依赖(本机应为空)', async () => {
+  const missing = missingDeps();
+  if (missing.length) throw new Error('本机缺依赖: ' + missing.join(', '));
+  if (CORE_DEPS.length < 8) throw new Error('依赖清单不完整');
+  return `${CORE_DEPS.length} 个运行时依赖全部可解析`;
+});
+
+await t('安全: 二进制输出自检拒绝文本冒充 .xlsx/.docx/.odt', async () => {
+  const fakes = [
+    ['xlsx', Buffer.from('产品\t数量\n键盘\t10\n', 'utf8')],
+    ['docx', Buffer.from('<html><body>x</body></html>', 'utf8')],
+    ['odt', Buffer.from('PK 但后面不是 zip', 'utf8')],
+  ];
+  for (const [ext, buf] of fakes) {
+    try {
+      assertOfficeBinary(buf, ext);
+      throw new Error(`未拦截文本冒充 .${ext}`);
+    } catch (e) {
+      if (e.code !== 'BAD_OUTPUT_FORMAT') throw e;
+    }
+  }
+  assertOfficeBinary(await excel.buildWorkbook({ sheets: [{ rows: [['a', 1]] }] }), 'xlsx');
+  assertOfficeBinary(await word.writeDocx({ text: '正常' }), 'docx');
+  return `${fakes.length} 类文本冒充被拒,真 OOXML 通过`;
+});
+
+await t('回归: 表格转 .tsv 用制表符(此前写成逗号分隔)', async () => {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const csv = join(outDir, 'sep.csv');
+  const tsv = join(outDir, 'sep.tsv');
+  await writeFile(csv, Buffer.from('产品,数量\n键盘,10\n', 'utf8'));
+  await office.opConvert(csv, tsv);
+  const text = await readFile(tsv, 'utf8');
+  if (!text.includes('\t')) throw new Error('没有制表符: ' + JSON.stringify(text.slice(0, 60)));
+  if (text.includes(',')) throw new Error('仍是逗号分隔: ' + JSON.stringify(text.slice(0, 60)));
+  // 逗号分隔的 csv 仍应是逗号
+  const back = join(outDir, 'sep-back.csv');
+  await office.opConvert(csv, back);
+  if (!(await readFile(back, 'utf8')).includes(',')) throw new Error('csv 反而不是逗号了');
+  return JSON.stringify(text.split('\n')[0]);
 });
 
 const failed = results.filter((r) => !r.ok);

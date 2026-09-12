@@ -133,6 +133,8 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **内网 / 无外网怎么装？** 用 `-offline.zip`，解压后 `link:` 安装，全程零下载。
 
+**离线包自带依赖吗？** 是。`.offline.zip` 内含完整 `node_modules`，且发布前会用 `node test/offline-check.mjs` 校验每个依赖都落在包内（不允许借用 profile 目录）、依赖树无安装脚本；解压后 `link:` 安装全程零下载。
+
 **转 PDF 报错？** `.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word，纯 JS 不提供 PDF 渲染；写出 `.doc` / `.odt` 同理。各格式保真度见[平台支持](docs/platform.md)。
 
 **智能体还是用了通用 `read`？** 见上一节，补一条用户级指令即可稳定命中。

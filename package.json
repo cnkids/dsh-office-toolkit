@@ -1,7 +1,7 @@
 {
   "name": "dsh-office-toolkit",
   "description": "让 DSH 智能体自己读写 Word / Excel：纯 JavaScript，不装 Office 也能跑。",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -59,6 +59,7 @@
   },
   "scripts": {
     "test": "node test/selftest.mjs && node test/converters.test.mjs && node test/plugin-smoke.mjs",
-    "coverage": "rm -rf coverage && c8 --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/selftest.mjs && c8 --clean=false --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/converters.test.mjs && c8 --clean=false --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/plugin-smoke.mjs"
+    "coverage": "rm -rf coverage && c8 --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/selftest.mjs && c8 --clean=false --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/converters.test.mjs && c8 --clean=false --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/plugin-smoke.mjs",
+    "verify:offline": "node test/offline-check.mjs"
   }
 }
