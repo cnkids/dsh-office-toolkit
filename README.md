@@ -6,7 +6,7 @@
 
 **安装**:`dsh plugin --profile web add github:cnkids/dsh-office-toolkit`,重启 `dsh web` 后新建会话。
 
-> **0.3.7** 强化工具描述,让智能体优先用本插件读写 Office 文件(见「让智能体优先使用本插件」)。**0.3.6** 把 `xlsx` 换成无已知 high 漏洞的 `@e965/xlsx@0.20.3`。**0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
+> **0.3.8** 补充「更新」说明:重跑同一条 `add` 即可,三种安装来源均已实测。**0.3.7** 强化工具描述,让智能体优先用本插件读写 Office 文件。**0.3.6** 把 `xlsx` 换成无已知 high 漏洞的 `@e965/xlsx@0.20.3`。**0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
 
 ## 工具
 
@@ -53,6 +53,19 @@
 dsh --profile web --dump-config | grep -A1 dsh-office-toolkit   # 校验
 dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 ```
+
+### 更新
+
+**重跑当初那条 `add` 就是更新** —— pnpm 会重新解析并拉取,`file:` / 固定直链 / `github:` 三种来源都已实测(`file:` 同名文件内容变了会重装;固定直链的 URL 内容变了也会重装;`github:` 分支前进后会解析到新提交)。也可一次更新 profile 内全部依赖:
+
+```sh
+dsh plugin --profile web add <当初用的 spec>   # 重新安装 = 更新
+dsh plugin --profile web update                # 更新 profile 内全部依赖
+```
+
+- **`link:` 安装不需要 pnpm**:源码目录 `git pull` 即最新。
+- 装了**带版本号**的 spec(`#v0.3.7` 或 `.../releases/download/v0.3.7/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用**不带版本号的固定直链**的原因。
+- **更新后必须重启 `dsh web`(或重开桌面端)并新建会话**,否则看起来像没更新:工具列表与描述只在启动时读取。
 
 目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm(见「开发 → 发布到 npm」,暂未发布)。
 
