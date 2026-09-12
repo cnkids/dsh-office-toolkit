@@ -1,7 +1,7 @@
 {
   "name": "dsh-office-toolkit",
-  "description": "DSH host plugin: cross-platform Word/Excel (docx/xlsx/doc/xls) read & write agent tools built on mammoth, docx, @wekanteam/exceljs, SheetJS and word-extractor, with optional textutil/LibreOffice/Word converters.",
-  "version": "0.3.13",
+  "description": "让 DSH 智能体自己读写 Word / Excel：纯 JavaScript，不装 Office 也能跑。",
+  "version": "0.3.14",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -26,6 +26,7 @@
   },
   "files": [
     "lib",
+    "docs",
     "cordis.patch.yml",
     "README.md"
   ],
