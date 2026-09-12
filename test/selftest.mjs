@@ -9,6 +9,7 @@ import * as excel from '../lib/core/excel.js';
 import * as legacy from '../lib/core/legacy.js';
 import * as converters from '../lib/core/converters.js';
 import { htmlToMarkdown, plainTextToHtml } from '../lib/core/md.js';
+import { htmlToDocxBuffer } from '../lib/core/docx-writer.js';
 import { CAPS } from '../lib/core/util.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -573,20 +574,98 @@ await t('安全: 解压炸弹 — 压缩比异常时拒绝(压缩包本身很小
   }
 });
 
-await t('安全: 写入 docx 前剔除图片(不触碰可联网的图片探测栈)', async () => {
-  const cases = [
-    ['<p>前<img src="a.png" alt="图 1">后</p>', '<p>前图 1后</p>'],
-    ['<figure><img src="https://x/y.jpg"><figcaption>说明</figcaption></figure>', '说明'],
-    ['<img src="x" alt="a&amp;b">', 'a&amp;b'],
-    ['<img src="x" alt="<script>alert(1)</script>">', '&lt;script&gt;alert(1)&lt;/script&gt;'],
+await t('安全: 写入 docx 不解析图片(只留 alt 文本,不联网)', async () => {
+  const buf = await word.writeDocx({
+    html: '<p>正文</p><img src="https://example.com/x.jpg" alt="图 1">',
+  });
+  if (!Buffer.isBuffer(buf) || buf.length === 0) throw new Error('含图片的 HTML 仍应生成 docx');
+  const back = await word.readDocx(buf);
+  if (!back.content.includes('正文')) throw new Error('正文丢失');
+  if (!back.content.includes('图 1')) throw new Error('alt 文本未保留');
+  const xml = new (await import('pizzip')).default(buf).file('word/document.xml').asText();
+  if (xml.includes('graphic') || xml.includes('pic:pic')) throw new Error('docx 里出现了图片部件');
+  return `图片被跳过,alt 保留(${buf.length} 字节)`;
+});
+
+await t('docx-writer: 标题 / 内联 / 列表 / 表格 / 引用 / 代码 / 链接 / 分隔线', async () => {
+  const html = [
+    '<h1>一级标题</h1><h3>三级标题</h3>',
+    '<p><strong>粗</strong><em>斜</em><u>下划</u><s>删</s><code>码</code><sub>下</sub><sup>上</sup></p>',
+    '<p style="color:#f00;background-color:#EEE;font-size:20px;font-weight:bold;font-style:italic;text-decoration:underline line-through;text-align:center">样式</p>',
+    '<ul><li>项目一<ul><li>子项</li></ul></li></ul><ol><li>第一</li></ol>',
+    '<table><thead><tr><th>表头</th></tr></thead><tbody><tr><td><p>甲</p><p>乙</p></td></tr></tbody></table>',
+    '<blockquote>引用</blockquote>',
+    '<pre>行一\n行二</pre>',
+    '<hr>',
+    '<p><a href="https://example.com/x">正常链接</a></p>',
+    '<custom>未知标签</custom>',
+  ].join('');
+  const buf = await htmlToDocxBuffer(html);
+  const zip = new (await import('pizzip')).default(buf);
+  const xml = zip.file('word/document.xml').asText();
+  const numbering = zip.file('word/numbering.xml');
+  const rels = zip.file('word/_rels/document.xml.rels').asText();
+  const markers = [
+    ['Heading1 样式', xml.includes('Heading1')],
+    ['Heading3 样式', xml.includes('Heading3')],
+    ['粗体', xml.includes('<w:b/>')],
+    ['斜体', xml.includes('<w:i/>')],
+    ['下划线', xml.includes('<w:u ')],
+    ['删除线', xml.includes('<w:strike/>')],
+    ['等宽字体', xml.includes('Consolas')],
+    ['下标', xml.includes('subscript')],
+    ['上标', xml.includes('superscript')],
+    ['前景色 f00→ff0000', xml.includes('ff0000')],
+    ['底纹 #EEE→eeeeee', xml.includes('eeeeee')],
+    ['20px→30 半磅', xml.includes('w:sz w:val="30"')],
+    ['居中', xml.includes('w:jc w:val="center"')],
+    ['项目符号编号', xml.includes('<w:numPr>')],
+    ['表格', xml.includes('<w:tbl>')],
+    ['表头底纹', xml.includes('F2F2F2')],
+    ['引用缩进', xml.includes('w:ind ')],
+    ['分隔线边框', xml.includes('<w:pBdr>')],
+    ['软换行', xml.includes('<w:br/>')],
+    ['超链接', xml.includes('w:hyperlink')],
+    ['链接写入 rels', rels.includes('https://example.com/x')],
   ];
-  for (const [input, want] of cases) {
-    const got = word.stripImages(input);
-    if (got !== want) throw new Error(`${JSON.stringify(input)} → ${JSON.stringify(got)},期望 ${JSON.stringify(want)}`);
+  const bad = markers.filter(([, ok]) => !ok).map(([name]) => name);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  if (!numbering) throw new Error('缺少 numbering.xml');
+  if (!numbering.asText().includes('w:val="bullet"')) throw new Error('缺少无序列表编号定义');
+  if (!numbering.asText().includes('w:val="decimal"')) throw new Error('缺少有序列表编号定义');
+  const text = (await word.readDocx(buf)).content;
+  for (const needle of ['一级标题', '三级标题', '粗', '斜', '下划', '删', '码', '样式', '项目一', '子项', '第一', '表头', '甲', '乙', '引用', '行一', '行二', '正常链接', '未知标签']) {
+    if (!text.includes(needle)) throw new Error(`回读文本缺少: ${needle}`);
   }
-  const buf = await word.writeDocx({ html: '<p>图片</p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">' });
-  if (!Buffer.isBuffer(buf) || buf.length === 0) throw new Error('剔除图片后仍应能生成 docx');
-  return `${cases.length} 个用例 + 含图片的 HTML 仍生成 docx(${buf.length} 字节)`;
+  return `${markers.length} 项标记 + 19 个文本回读全部通过`;
+});
+
+await t('docx-writer: 横向纸张与页边距生效', async () => {
+  const pgOf = async (opts) => {
+    const buf = await htmlToDocxBuffer('<p>x</p>', opts);
+    return new (await import('pizzip')).default(buf).file('word/document.xml').asText();
+  };
+  const portrait = await pgOf({});
+  const landscape = await pgOf({ landscape: true });
+  const margin = await pgOf({ marginsMm: 40 });
+  if (!portrait.includes('w:orient="portrait"')) throw new Error('默认不是纵向');
+  if (!landscape.includes('w:orient="landscape"')) throw new Error('横向未生效');
+  if (!landscape.includes('w:w="16837"') || !landscape.includes('w:h="11905"')) throw new Error('横向未交换宽高: ' + landscape.slice(0, 200));
+  if (!portrait.includes('w:w="11905"') || !portrait.includes('w:h="16837"')) throw new Error('纵向尺寸不是 A4');
+  if (!margin.includes('w:top="2267"')) throw new Error('40mm 页边距未生效');
+  if (!portrait.includes('w:top="1417"')) throw new Error('默认 25mm 页边距不对');
+  return 'A4 纵向 / 横向 / 页边距均正确';
+});
+
+await t('安全: docx 里的 javascript: 链接降级为纯文本', async () => {
+  const buf = await htmlToDocxBuffer('<p><a href="javascript:alert(1)">点我</a><a href="https://ok.example/">正常</a></p>');
+  const zip = new (await import('pizzip')).default(buf);
+  const xml = zip.file('word/document.xml').asText();
+  const rels = zip.file('word/_rels/document.xml.rels').asText();
+  if (xml.includes('javascript') || rels.includes('javascript')) throw new Error('危险链接写进了文档');
+  if (!xml.includes('点我')) throw new Error('链接文字丢失');
+  if (!rels.includes('https://ok.example/')) throw new Error('正常链接被误伤');
+  return 'javascript: 已丢弃,http(s) 保留';
 });
 
 const failed = results.filter((r) => !r.ok);

@@ -11,7 +11,7 @@
   <a href="https://github.com/cnkids/dsh-office-toolkit/releases/latest"><img src="https://img.shields.io/github/v/release/cnkids/dsh-office-toolkit?style=flat&amp;label=release&amp;color=4D6BFE" alt="Latest release"></a>
   <a href="https://github.com/cnkids/dsh-office-toolkit/releases"><img src="https://img.shields.io/github/downloads/cnkids/dsh-office-toolkit/total?style=flat&amp;label=downloads&amp;color=4D6BFE" alt="Total downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/node-%E2%89%A518-339933?style=flat" alt="Node.js 18 or newer">
+  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat" alt="Node.js 20 or newer">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat" alt="Supported platforms: macOS, Windows and Linux">
   <img src="https://img.shields.io/badge/dsh-plugin-4D6BFE?style=flat" alt="DSH plugin">
 </p>
@@ -30,9 +30,7 @@
 
 ---
 
-给 DSH 装上这个宿主插件,智能体就能直接读文档、写台账、改表格、套合同模板、转换旧格式,不用再手动搬文件。核心能力全部由纯 JavaScript 实现,**不需要安装 Office 或 LibreOffice**;只有写出 `.doc` / `.odt` 和转 `.pdf` 时才可选地借用本机转换器。
-
-插件只做文档读写这一件事:不访问网络、不常驻后台、不修改 DSH 上游代码;所有写入都要先通过 DSH 的沙箱围栏。
+核心能力全部纯 JavaScript 实现,**不装 Office 也能用**;只有写出 `.doc` / `.odt` 和转 `.pdf` 时才可选地借用本机转换器。插件只做文档读写这一件事:不联网、不常驻后台、不修改 DSH 上游代码。
 
 ## 工具
 
@@ -63,42 +61,33 @@
 
 ## 安装
 
-包名与仓库名均为 `dsh-office-toolkit`。**没装 git 就用第一条** —— 它不需要 git、不需要手动下载,也永远指向最新版。
+包名与仓库名均为 `dsh-office-toolkit`。**没装 git 就用第一条**,它不需要 git,也永远指向最新版。
 
 | 场景 | 命令 |
 | --- | --- |
 | **无 git(推荐)** | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/latest/download/dsh-office-toolkit.tgz` |
 | 有 git · 跟随 main | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit` |
-| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.11` |
-| 完全离线 | 解压 `releases/latest/download/dsh-office-toolkit-offline.zip` 后 `dsh plugin --profile web add link:C:/dsh-office-toolkit` |
+| 完全离线 | 解压 `dsh-office-toolkit-offline.zip` 后 `dsh plugin --profile web add link:C:/dsh-office-toolkit` |
 | 本地源码 | `dsh plugin --profile web add link:/path/to/dsh-office-toolkit` |
 
-`releases/latest/download/...` 是 GitHub 的固定别名,每个 Release 都会同时上传**带版本号**和**不带版本号**两份附件,所以这条命令不用随版本改。`.tgz` 只有几十 KB;离线包内含完整 `node_modules`,解压后 `link:` 安装零下载。
+`releases/latest/download/...` 是固定别名(每个 Release 都传带版本号与不带版本号两份附件),所以命令不用随版本改。`.tgz` 只有几十 KB,依赖走 npm;离线包含完整 `node_modules`,零下载。
 
-`dsh plugin` 会在 profile 目录执行 `pnpm add`,并自动把包名追加进 `dsh.profile.bundles`(本包声明了 `dsh.bundle`,无需手改)。装完**必须重启 `dsh web`(或重开桌面端)并新建会话**才会加载。
+`dsh plugin` 在 profile 目录执行 `pnpm add`,并自动把包名写进 `dsh.profile.bundles`(本包声明了 `dsh.bundle`)。**装完必须重启 `dsh web` 并新建会话**才会加载。
 
 ```sh
 dsh --profile web --dump-config | grep -A1 dsh-office-toolkit   # 校验
 dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 ```
 
-目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm。
+目标机器需 **Node ≥ 20** 与 pnpm;`.tgz` 不含依赖,需要能访问 npm registry(内网先配镜像)。
 
 ### 更新
 
-**重跑当初那条 `add` 就是更新** —— pnpm 会重新解析并拉取:
+**重跑当初那条 `add` 就是更新**;一次更新 profile 内全部依赖用 `dsh plugin --profile web update`。
 
-| 安装方式 | 更新行为 |
-| --- | --- |
-| 固定直链(推荐) | URL 内容变更后重跑 `add` 即装新版 |
-| 本地 `.tgz`(`file:`) | 同名文件内容变更后重跑 `add` 即重装 |
-| `github:` / git 分支 | 重跑 `add`,或 `dsh plugin --profile web update` |
-
-一次更新 profile 内全部依赖:`dsh plugin --profile web update`。
-
-- **`link:` 安装不需要 pnpm**:源码目录 `git pull` 即最新。
-- 装了**带版本号**的 spec(`#v0.3.11` 或 `.../releases/download/v0.3.11/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用固定直链的原因。
-- **更新后必须重启 `dsh web` 并新建会话**,否则看起来像没更新:工具列表与描述只在启动时读取。
+- `link:` 安装不需要 pnpm,源码目录 `git pull` 即最新。
+- 装了**带版本号**的 spec(`#vX.Y.Z`、`.../releases/download/vX.Y.Z/...tgz`)不会自动前进 —— 这也是推荐固定直链的原因。
+- **更新后必须重启 `dsh web` 并新建会话**,否则看起来像没更新(工具列表与描述只在启动时读取)。
 
 ## 用法示例
 
@@ -146,16 +135,7 @@ dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 
 DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `description` 选择;而内置 `read` / `write` / `edit` 只处理 UTF-8 文本,读 `.docx` 会直接返回 `Error: binary file`,且不会提示该换哪个工具。本插件已把「哪类文件必须用本工具」写在每个描述最前面,并把 `Word / Excel / 文档 / 表格 / .docx / .xlsx` 等词作为触发提示,通常一次就能选对。
 
-想更保险,在**用户级指令文件** `~/.dsh/AGENTS.md` 里加一段(该文件对所有项目、所有会话生效):
-
-```markdown
-## 文件读写
-- 读取 .docx/.doc/.rtf/.odt/.xlsx/.xls/.xlsb/.ods/.csv/.tsv 一律用 `office_read`。
-- 创建/修改用 `office_write_docx` / `office_write_xlsx` / `office_edit_xlsx` / `office_fill_docx_template`,格式转换用 `office_convert`。
-- 不要用通用 `read`/`write`/`edit` 处理这些文件 —— 它们只能处理 UTF-8 文本。
-```
-
-指令文件是热加载的,保存即生效;插件本身的改动仍需重启 `dsh web`。
+想更保险,在**用户级指令文件** `~/.dsh/AGENTS.md`(对所有项目与会话生效)里加一句:Office 文件一律用 `office_read` / `office_write_*` / `office_edit_xlsx` / `office_fill_docx_template` / `office_convert`,不要用通用 `read`/`write`/`edit`。该文件热加载,保存即生效。
 
 ## 工作方式
 
@@ -165,7 +145,7 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
    ├─ office_read · office_write_docx · office_write_xlsx
    │  office_edit_xlsx · office_fill_docx_template · office_convert
    │
-   ├─ docx / xlsx ─────────── 纯 JS:mammoth · @turbodocx/html-to-docx · @wekanteam/exceljs · 自研 OOXML 图表注入
+   ├─ docx / xlsx ─────────── 纯 JS:mammoth 读取 · 自研 OOXML 生成(docx)· @wekanteam/exceljs · 自研图表注入
    ├─ xls / xlsb / ods / csv ─ 纯 JS:SheetJS(@e965/xlsx 0.20.3)
    └─ doc / rtf / odt ──────── 内置线性解析器优先
                                  └─ 不可用时 → 本机转换器
@@ -186,64 +166,49 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 
 **限制**
 
-- 图表支持 `bar` / `column` / `line` / `pie`,以 OOXML 注入实现,打开时由 Excel/WPS 计算数据;组合图、双轴等复杂图表请手动调整。
-- 一个工作表只能有一个 drawing 部件,因此同表多图表共用一个 drawing(各自独立锚点,可分别拖动)。
+- 图表支持 `bar` / `column` / `line` / `pie`(OOXML 注入,数据由 Excel/WPS 打开时计算);组合图、双轴请手动调整。同表多图表共用一个 drawing(一个工作表只能有一个)。
 - `.doc` 纯 JS 解析不保留表格与版式;写出 `.doc` / `.odt`、转 `.pdf` 需要 LibreOffice 或 Word。
-- 模板填充只做 `{{变量}}` 替换,不支持循环 / 条件(批量套打多次调用即可)。
-- 文档内嵌图片只读不写:写入 `.docx` 时会移除 `<img>`(有 `alt` 文本则保留为正文),不会嵌入图片。
-- `office_convert` 源与目标扩展名相同时:路径不同则原样复制,路径相同则直接返回。
-- CSV / TSV / TXT 按 **UTF-8** 解码(这类格式不自带编码信息);GBK 等其他编码请先转成 UTF-8。
+- 模板填充只做 `{{变量}}` 替换,不支持循环 / 条件(批量套打多次调用)。
+- 图片只读不写:写入 `.docx` 时不嵌入图片,只把 `<img>` 的 `alt` 文本留在正文里。
+- `office_convert` 源与目标扩展名相同时,路径不同则复制、路径相同则直接返回。
+- CSV / TSV / TXT 按 **UTF-8** 解码(这类格式不带编码信息),GBK 请先转码。
 
 ## 常见问题
 
-**Windows 上提示 `'git' 不是内部或外部命令`?**
-`github:` 形式的依赖必须调用 git 拉取。改用固定直链那条命令即可绕开,或执行 `winget install --id Git.Git -e` 装上 git。
+**Windows 提示 `'git' 不是内部或外部命令`?** `github:` 形式要用 git,改用固定直链即可绕开,或 `winget install --id Git.Git -e`。
 
-**内网 / 无外网机器怎么装?**
-下载 `dsh-office-toolkit-offline.zip`(内含完整 `node_modules`),解压后 `link:` 安装,全程零下载。Windows 路径记得用正斜杠:`dsh plugin --profile web add link:C:/dsh-office-toolkit`。
+**内网 / 无外网怎么装?** 用 `-offline.zip`(内含完整 `node_modules`)解压后 `link:` 安装,零下载。
 
-**智能体还是先用了通用 `read`?**
-见「让智能体优先使用本插件」。工具描述已强化,再加一条用户级指令即可稳定命中。
+**智能体还是先用了通用 `read`?** 见「让智能体优先使用本插件」。
 
-**更新完感觉没变化?**
-插件在 DSH 启动时加载,必须**重启 `dsh web`(或重开桌面端)并新建会话**。校验:`dsh --profile web --dump-config | grep -A1 dsh-office-toolkit`。
-
-**转 PDF 报错?**
-`.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word,纯 JS 不提供 PDF 渲染。
-
-**装完提示 `Ignored build scripts`?**
-依赖里只有 `@turbodocx/html-to-docx` 带一个 `postinstall`,内容仅仅是打印一条推广文案(读本地 `messages.json`,不下载、不写盘、不执行外部命令)。pnpm 默认就不执行依赖的构建脚本,所以这条提示可以忽略;想少看日志就加 `--loglevel=error`。
+**更新完没变化 / 转 PDF 报错?** 更新后必须重启 `dsh web` 并新建会话;`.pdf` 输出依赖本机 LibreOffice 或 Word,纯 JS 不提供 PDF 渲染。
 
 ## 依赖与已知告警
 
-- **`xlsx` 用的是 `@e965/xlsx@0.20.3`**:npm 上的 `xlsx` 停在 `0.18.5`,带 Prototype Pollution(`GHSA-4r6h-8v6p-xvw6`)与 ReDoS(`GHSA-5pgg-2g8v-p4x9`)两个 high;SheetJS 早已停止在 npm 发布,修复版只在其官方 CDN。但官方 CDN 的 URL 形式依赖会被 pnpm 的 `blockExoticSubdeps` 判为 exotic 子依赖而拒绝安装,所以改用 npm 上该官方构建的自动转发包(月下载 300 万+,仓库 [sheetjs-npm-publisher](https://github.com/e965/sheetjs-npm-publisher))。包名不同,故代码里写 `import('@e965/xlsx')`。
-- **换用两个维护中的 fork,`npm audit` 归零**(0.3.12):
-  - `exceljs@4.4.0` → **`@wekanteam/exceljs@4.7.3`**([Wekan](https://github.com/wekan/exceljs) 维护的同线 fork)。原版锁定 `uuid@^8.3.0`,而 `uuid` 的 [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) 只在 `11.1.1` 修复;fork 已升到 `uuid@^14`。4.x 同线,API 不变。
-  - `html-to-docx@1.8.0` → **`@turbodocx/html-to-docx@1.23.1`**([TurboDocx](https://github.com/TurboDocx/html-to-docx) 维护的 fork,周下载 9 万+)。原版依赖 `image-size`,而它有 2 个 high DoS 且 **npm 上全部版本都受影响、没有修复版**;fork 换成了 `probe-image-size`。
-  - 两个 fork 都在 npm 与国内镜像上可直接安装,依赖树**反而更小**(207 → 204 包,83.5 → 81.8 MB)。
+**`npm audit` 0 条,整棵依赖树没有任何安装脚本**(0.3.13 起)。三处取舍:
+
+- **`.docx` 生成是自己写的**(`lib/core/docx-writer.js`,基于 `docx@9`),不再用 `html-to-docx`:它依赖的 `image-size` 有 2 个 high DoS 且 **npm 上所有版本都受影响、没有修复版**;而唯一清掉它的维护 fork 又带 `postinstall` + `axios`/`needle`,会让 `dsh plugin add` 停下来要求批准构建脚本。
+- **`exceljs` 换成 `@wekanteam/exceljs`**([Wekan](https://github.com/wekan/exceljs) 维护的 4.x 同线 fork):上游锁 `uuid@^8.3.0`,而 `uuid` 的告警只在 `11.1.1` 修复,fork 已升到 `uuid@^14`。
+- **`xlsx` 用 `@e965/xlsx@0.20.3`**:npm 上的 `xlsx` 停在 `0.18.5`(Prototype Pollution + ReDoS 两个 high),修复版只在 SheetJS 自建 CDN;而 URL 形式依赖会被 pnpm 的 `blockExoticSubdeps` 拒绝,故改用该官方构建的 npm 转发包(月下载 300 万+,[sheetjs-npm-publisher](https://github.com/e965/sheetjs-npm-publisher))。
+
+后两个都不是上游官方 publisher(`@e965` 是转发,`@wekanteam` 是他人维护的 fork),`package-lock.json` 已锁 integrity;介意请自行评估。
 
 ## 设计说明
 
-解析 OOXML / HTML / ODT 时没有用 `/<[^>]+>/g`、`/([A-Za-z]+\d+)/` 这类正则:它们带无界量词且分支可重叠,在构造输入上会让回溯引擎反复重扫同一段文本,耗时随输入超线性增长(ReDoS,SonarQube `S5852`)。现在统一走 `lib/core/markup.js` 的一次前向扫描,每个字符只被访问有限次,**复杂度是输入长度的 O(n) 上界,与输入内容无关**。`test/converters.test.mjs` 覆盖 20 万字符级畸形输入,要求毫秒级返回或快速报错。
+解析 OOXML / HTML / ODT 不用 `/<[^>]+>/g` 这类正则:带无界量词与可重叠分支,构造输入会让回溯反复重扫同一段文本(ReDoS,`S5852`)。现在统一走 `lib/core/markup.js` 的一次前向扫描,复杂度与输入内容无关,是长度的 O(n) 上界;`test/converters.test.mjs` 用 20 万字符畸形输入验证毫秒级返回。
 
 ## 本地开发
 
 ```sh
-npm test           # 三个测试脚本:核心库 40 · 跨平台层 16 · 插件适配层 36,共 92 项
+npm test           # 三个测试脚本:核心库 43 · 跨平台层 16 · 插件适配层 36,共 95 项
 npm run coverage   # 同上并统计覆盖率,写出 coverage/lcov.info
 ```
 
-纯 Node 脚本,不需要测试框架。覆盖率(c8):**语句 91.8% / 分支 68.7% / 函数 93.7%**。未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
+纯 Node 脚本,无需测试框架。覆盖率(c8):**语句 92.5% / 分支 70.8% / 函数 93.9%**;未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退。
 
-profile 当前是 `link:` 安装,改完源码重启 `dsh web` 即生效;若用 `file:` 安装需重新执行一次 `add` 刷新副本(HMR 不监听插件源码)。
+`link:` 安装改完源码重启 `dsh web` 即生效;`file:` / `github:` 安装需重跑一次 `add` 刷新副本(HMR 不监听插件源码)。
 
-代码质量走 SonarQube(项目 `dsh-office-toll`;`sonar-project.properties` 不入库):
-
-```sh
-export SONAR_TOKEN=<token> && sonar-scanner   # 会读取 coverage/lcov.info
-```
-
-当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点;整体覆盖率 85.4%、新代码覆盖率 88.9%(门槛 80%),质量门通过;可靠性 · 安全性 · 可维护性均 A 级。
+代码质量走 SonarQube(项目 `dsh-office-toll`;`sonar-project.properties` 不入库):`export SONAR_TOKEN=<token> && sonar-scanner`(读 `coverage/lcov.info`)。当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点,整体覆盖率 86.7%、新代码覆盖率 93.9%(门槛 80%),质量门通过。
 
 ### 发布到 npm(维护者)
 
@@ -252,22 +217,21 @@ npm login --registry https://registry.npmjs.org/   # 首次,需要 npm 账号 + 
 npm publish
 ```
 
-`package.json` 的 `publishConfig.registry` 已固定为官方源,所以 `npm publish` **不受 `~/.npmrc` 里国内镜像的影响**(镜像只能读不能发)。发布后裸包名 `dsh plugin --profile web add dsh-office-toolkit` 即可用。
+`publishConfig.registry` 已固定为官方源,所以**不受 `~/.npmrc` 国内镜像影响**(镜像只能读不能发)。发布后裸包名 `add dsh-office-toolkit` 即可用。
 
 ### 发版(维护者)
 
 1. 改 `package.json` 版本号并同步 README「版本记录」;
-2. 跑上面三个测试脚本;
-3. 提交并打 tag:`git tag -a vX.Y.Z -m "..." && git push origin main vX.Y.Z`;
-4. `npm pack` 产出 `.tgz`;把目录连同 `node_modules` 一起打包成 `-offline.zip`;
-5. 建 Release 并上传 **4 个附件**:带版本号与不带版本号各一份 `.tgz` 与 `-offline.zip`(不带版本号的那两份供 `releases/latest/download/` 固定别名使用)。
-
-> 上传前确认离线包确实含 `node_modules`:`unzip -l ...-offline.zip | grep -c node_modules/` 应有数千条。
+2. 跑三个测试脚本 + Sonar;
+3. 提交、`git tag -a vX.Y.Z -m "..."`、push;
+4. `npm pack` 出 `.tgz`;目录连同 `node_modules`(`npm install --omit=dev` 后)打包成 `-offline.zip`,上传前用 `unzip -l ...-offline.zip | grep -c node_modules/` 确认为数千条;
+5. 建 Release,上传 **4 个附件**:带版本号与不带版本号各一份 `.tgz` 与 `-offline.zip`(不带版本号的两份供 `releases/latest/download/` 固定别名使用)。
 
 ## 版本记录
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.13** | `.docx` 生成改为自研(`docx@9`),去掉带 `postinstall` 的依赖 —— 安装不再被 pnpm 打断;精简 README,修正 Node ≥ 20 与覆盖率数字 |
 | **0.3.12** | 安全收口:`npm audit` **归零**(换用 `@wekanteam/exceljs` / `@turbodocx/html-to-docx` 两个维护 fork)、防解压炸弹(解压总量 / 压缩比上限)、写入 `.docx` 前剥离图片 |
 | **0.3.11** | 安全审计:修公式注入 / 符号链接绕过围栏 / 临时文件全局可读,并公开剩余风险 |
 | **0.3.10** | 接入 c8 覆盖率(语句 91.6%);修 3 个 bug:CSV 读出乱码、`office_edit_xlsx` 的 `sheet` 序号基准、日期回读差一天 |
@@ -288,7 +252,8 @@ npm publish
 ```
 lib/index.js                 宿主适配层:工具注册、路径解析、沙箱围栏、fs/observed 事件
 lib/core/office.js           六个操作的编排
-lib/core/word.js             docx 读 / 写 / 模板(mammoth / @turbodocx/html-to-docx / docxtemplater)
+lib/core/word.js             docx 读 / 写 / 模板(mammoth / docxtemplater)
+lib/core/docx-writer.js      HTML → OOXML 文档生成(自研,基于 docx@9)
 lib/core/excel.js            xlsx 读 / 建 / 编辑(@wekanteam/exceljs)
 lib/core/charts.js           OOXML 图表注入
 lib/core/legacy.js           旧表格格式(SheetJS)
@@ -308,27 +273,25 @@ test/                        三个测试脚本
 
 | 问题 | 影响 | 处理 |
 | --- | --- | --- |
-| **公式注入** | 把外部 CSV/TSV/TXT 转成 `.xlsx` 时,`=` 开头的内容被写成**活公式**(`=cmd\|'/c calc'!A0`、`=HYPERLINK(...)`),用户在 Excel 里打开就可能触发 DDE / 外链 | 文本格式来源的表格一律中和公式(保持字符串、清掉公式字段);`office_write_xlsx` 自己的公式能力不受影响 |
-| **符号链接绕过写入围栏** | 围栏此前只做词法比较:工作区内一个指向外部的符号链接,能让写入落到沙箱之外 | 围栏同时校验**真实路径**(realpath),绕行会被拒绝 |
-| **临时文件全局可读** | 转换旧格式时会把文档内容写进公共临时目录的 `0644` 文件,同机其他用户可读 | 临时文件显式 `0600` |
-| **正则回溯(ReDoS)** | 构造输入可让宿主进程长时间卡住 | 0.3.0 起所有标签/引用解析改为线性扫描,见「设计说明」 |
-| **解压炸弹** | `.docx` / `.xlsx` / `.odt` 都是 zip,此前只限制压缩包体积,一个几十 KB 的文件可解压出几十 GB,把宿主进程撑爆 | 0.3.12 起解析前先读 zip 中央目录,声明解压总量超过 1 GiB 或压缩比超过 150:1 直接拒绝 |
-| **图片探测 DoS 与外链抓取** | 写 `.docx` 时 html-to-docx 会去探测 `<img>` 的尺寸:旧版走 `image-size`(ICNS / JXL / HEIF 解析有无上限循环,`GHSA-w3rx-r6r6-pgpr`、`GHSA-5p2g-fcmc-qvqq`,**上游至今没有修复版**),新版走 `probe-image-size` → `needle`(会按 `<img src>` 真的发起 HTTP 请求) | 0.3.12 起写入前先剥掉 `<img>` / `<figure>`(`alt` 文本保留) —— 两条路径都不会被触发,插件始终不访问网络 |
-| **`xlsx` 已知漏洞** | Prototype Pollution 与 ReDoS,解析不可信表格时可达 | 0.3.6 起换用 `@e965/xlsx@0.20.3` |
-| **依赖链上的 4 条 `npm audit` 告警** | `image-size` 2 个 high(经 html-to-docx,上游无修复版)+ `uuid` 1 个 moderate(经 exceljs,修复版只在 11.x) | 0.3.12 起换用维护中的 fork(`@turbodocx/html-to-docx`、`@wekanteam/exceljs`),**`npm audit` 归零** |
+| 公式注入 | 外部 CSV/TSV/TXT 转 `.xlsx` 时 `=` 开头内容成为活公式(`=cmd\|'/c calc'!A0`),打开可能触发 DDE / 外链 | 文本来源一律中和公式(`office_write_xlsx` 自己的公式不受影响) |
+| 符号链接绕过围栏 | 围栏只做词法比较,工作区内一个指向外部的软链即可把写入带出沙箱 | 同时校验 realpath |
+| 临时文件全局可读 | 旧格式转换的 `0644` 临时文件同机可读 | 显式 `0600` |
+| 正则回溯(ReDoS) | 构造输入可让宿主长时间卡住 | 所有标签 / 引用解析改为线性扫描(0.3.0) |
+| 解压炸弹 | 只限制压缩包体积,几十 KB 的 zip 可解压出几十 GB | 解压总量 > 1 GiB 或压缩比 > 150:1 直接拒绝(0.3.12) |
+| 图片探测 DoS / 外链抓取 | `html-to-docx` 用 `image-size` 量图片尺寸,而它有 2 个 high DoS(ICNS / JXL / HEIF)且**无修复版**;其维护 fork 改用 `probe-image-size` → `needle`,会按 `<img src>` 真发 HTTP 请求 | 0.3.13 起 `.docx` 由自研生成器产出(`docx@9`),不解析图片、只保留 `alt`,图片与网络两条路径都不存在 |
+| `xlsx` 已知漏洞 | Prototype Pollution + ReDoS | 0.3.6 起换 `@e965/xlsx@0.20.3` |
+| 依赖链 4 条 `npm audit` 告警 | `uuid`、`image-size` 上游均不可修 | 换 `@wekanteam/exceljs` + 自研 docx 生成,`npm audit` 归零;整棵依赖树无安装脚本(0.3.12 / 0.3.13) |
 
 ### 边界与假设
 
-- **写入围栏由插件自己实现**(`lib/core/path-guard.js` + `lib/index.js`)。`.docx` / `.xlsx` 是二进制,而 DSH 的 `ctx.fs` 只提供 `writeText`,插件只能用 `node:fs` 落盘 —— 所以**这个围栏就是真正的边界**,不存在宿主写入沙箱兜底。
-- 围栏允许写入:DSH 策略给出的 `workspaceRoot`、会话 cwd、`process.cwd()`、系统临时目录。其中 `process.cwd()` 是镜像 DSH 默认沙箱根的兜底 —— 若 `dsh web` 从很宽的目录(例如用户主目录)启动,可写范围会随之变宽,**建议从工作区目录启动**。
-- **读取不做围栏**(与内置 `read` 工具一致):只按扩展名区分,不限制目录;`office_convert` 的源文件同理。
-- 不访问网络:插件自身不发起任何请求,写入 `.docx` 前也会剥掉 `<img>`,因此 `@turbodocx/html-to-docx` 里那套可联网的图片探测栈(`probe-image-size` / `needle`)不会被触发。
-- 不常驻后台。本包自身没有 `prepare` / `postinstall`;依赖树里唯一的安装脚本是 `@turbodocx/html-to-docx` 的 `postinstall`,只打印推广文案(见「常见问题」),且 pnpm 默认不执行依赖构建脚本。
+- **写入围栏是插件自己实现的**(`path-guard.js`):`.docx` / `.xlsx` 是二进制,而 `ctx.fs` 只提供 `writeText`,只能用 `node:fs` 落盘 —— **没有宿主沙箱兜底**。可写范围:策略给出的 `workspaceRoot`、会话 cwd、`process.cwd()`、系统临时目录;其中 `process.cwd()` 是兜底,**建议从工作区目录启动 `dsh web`**,否则可写范围会随启动目录变宽。
+- **读取不做围栏**(与内置 `read` 一致),`office_convert` 的源文件同理。
+- 不联网、不常驻后台;**本包与整棵依赖树都没有 `preinstall` / `install` / `postinstall` 脚本**,`dsh plugin add` 不会停下来要求批准构建脚本。
 
-### 已知且暂不修复
+### 残余风险
 
-- **zip 声明的解压体积可以伪造**:本插件的防护基于 zip 中央目录里的 `uncompressedSize`(以及压缩比)。蓄意构造的压缩包可以把该字段写小,此时仍会在真实解压时膨胀 —— 这层防护抬高的是门槛而**不是硬边界**;真要处理完全不可信的输入,请在独立进程 / 容器里跑并限制内存。
-- **供应链**:`@e965/xlsx` 是 SheetJS 官方构建在 npm 上的第三方转发(月下载 300 万+),不是官方 publisher;`package-lock.json` 已锁定 integrity。若对此敏感,可改用官方 CDN 的 URL 依赖 —— 但 pnpm 默认的 `blockExoticSubdeps` 会拒绝这种形式。`@wekanteam/exceljs`(Wekan)与 `@turbodocx/html-to-docx`(TurboDocx)同样是「官方包停更后的第三方维护 fork」,它们换来的是一条完全干净的 `npm audit`;两者的发布方都是有长期公开仓库的组织,但**这与上游官方包并非同一 publisher**,请自行评估后决定是否接受。
+- zip 头里的 `uncompressedSize` 可以伪造,解压炸弹防护抬高的是门槛而**不是硬边界**;处理完全不可信的输入请在独立进程 / 容器里跑并限制内存。
+- `@e965/xlsx` 与 `@wekanteam/exceljs` 不是上游官方 publisher,见「依赖与已知告警」。
 
 ### 报告安全问题
 
