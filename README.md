@@ -69,7 +69,7 @@
 | --- | --- |
 | **无 git(推荐)** | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/latest/download/dsh-office-toolkit.tgz` |
 | 有 git · 跟随 main | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit` |
-| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.10` |
+| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.11` |
 | 完全离线 | 解压 `releases/latest/download/dsh-office-toolkit-offline.zip` 后 `dsh plugin --profile web add link:C:/dsh-office-toolkit` |
 | 本地源码 | `dsh plugin --profile web add link:/path/to/dsh-office-toolkit` |
 
@@ -97,7 +97,7 @@ dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 一次更新 profile 内全部依赖:`dsh plugin --profile web update`。
 
 - **`link:` 安装不需要 pnpm**:源码目录 `git pull` 即最新。
-- 装了**带版本号**的 spec(`#v0.3.10` 或 `.../releases/download/v0.3.10/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用固定直链的原因。
+- 装了**带版本号**的 spec(`#v0.3.11` 或 `.../releases/download/v0.3.11/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用固定直链的原因。
 - **更新后必须重启 `dsh web` 并新建会话**,否则看起来像没更新:工具列表与描述只在启动时读取。
 
 ## 用法示例
@@ -264,6 +264,7 @@ npm publish
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.11** | 安全审计:修公式注入 / 符号链接绕过围栏 / 临时文件全局可读,并公开剩余风险 |
 | **0.3.10** | 接入 c8 覆盖率(语句 91.6%);修 3 个 bug:CSV 读出乱码、`office_edit_xlsx` 的 `sheet` 序号基准、日期回读差一天 |
 | **0.3.9** | README 改版:居中标题与徽章、导航、常见问题、工作方式图、版本记录 |
 | **0.3.8** | 补充「更新」说明:重跑同一条 `add` 即可更新 |
@@ -296,8 +297,34 @@ lib/core/util.js             错误类型、体积上限、截断
 test/                        三个测试脚本
 ```
 
-## 安全与许可证
+## 安全说明
 
-插件只读写用户指定路径下的文档,不访问网络、不上传内容;所有写入先经 DSH 沙箱围栏校验,越界直接拒绝。发现安全问题请通过 [GitHub 私密漏洞报告](https://github.com/cnkids/dsh-office-toolkit/security/advisories/new) 提交,不要发在公开 Issue 里。
+### 已经修掉的
+
+| 问题 | 影响 | 处理 |
+| --- | --- | --- |
+| **公式注入** | 把外部 CSV/TSV/TXT 转成 `.xlsx` 时,`=` 开头的内容被写成**活公式**(`=cmd\|'/c calc'!A0`、`=HYPERLINK(...)`),用户在 Excel 里打开就可能触发 DDE / 外链 | 文本格式来源的表格一律中和公式(保持字符串、清掉公式字段);`office_write_xlsx` 自己的公式能力不受影响 |
+| **符号链接绕过写入围栏** | 围栏此前只做词法比较:工作区内一个指向外部的符号链接,能让写入落到沙箱之外 | 围栏同时校验**真实路径**(realpath),绕行会被拒绝 |
+| **临时文件全局可读** | 转换旧格式时会把文档内容写进公共临时目录的 `0644` 文件,同机其他用户可读 | 临时文件显式 `0600` |
+| **正则回溯(ReDoS)** | 构造输入可让宿主进程长时间卡住 | 0.3.0 起所有标签/引用解析改为线性扫描,见「设计说明」 |
+| **`xlsx` 已知漏洞** | Prototype Pollution 与 ReDoS,解析不可信表格时可达 | 0.3.6 起换用 `@e965/xlsx@0.20.3` |
+
+### 边界与假设
+
+- **写入围栏由插件自己实现**(`lib/core/path-guard.js` + `lib/index.js`)。`.docx` / `.xlsx` 是二进制,而 DSH 的 `ctx.fs` 只提供 `writeText`,插件只能用 `node:fs` 落盘 —— 所以**这个围栏就是真正的边界**,不存在宿主写入沙箱兜底。
+- 围栏允许写入:DSH 策略给出的 `workspaceRoot`、会话 cwd、`process.cwd()`、系统临时目录。其中 `process.cwd()` 是镜像 DSH 默认沙箱根的兜底 —— 若 `dsh web` 从很宽的目录(例如用户主目录)启动,可写范围会随之变宽,**建议从工作区目录启动**。
+- **读取不做围栏**(与内置 `read` 工具一致):只按扩展名区分,不限制目录;`office_convert` 的源文件同理。
+- 不访问网络、不常驻后台、安装时不执行任何脚本(本包没有 `prepare` / `postinstall`)。
+
+### 已知且暂不修复
+
+- **解压炸弹**:`.docx` / `.xlsx` / `.odt` 都是 zip,插件限制的是**压缩包体积**(40 / 60 MB),**不限制解压后体积**,而 PizZip / ExcelJS / mammoth 都没有这层保护。处理不可信大文件时请留意内存。
+- **`image-size` 的 2 个 high(DoS)**:经 `html-to-docx` 引入,受影响范围 `<= 2.0.2`,而 npm 上最新就是 2.0.2 —— **上游没有修复版**。
+- **`uuid` 的 1 个 moderate**:经 `exceljs` 引入,漏洞路径是 v3/v5/v6 带 `buf` 参数(该库只用 v4,不可达);且 exceljs 锁定 `^8.3.0`,跨大版本替换风险高。
+- **供应链**:`@e965/xlsx` 是 SheetJS 官方构建在 npm 上的第三方转发(月下载 300 万+),不是官方 publisher;`package-lock.json` 已锁定 integrity。若对此敏感,可改用官方 CDN 的 URL 依赖 —— 但 pnpm 默认的 `blockExoticSubdeps` 会拒绝这种形式。
+
+### 报告安全问题
+
+请通过 [GitHub 私密漏洞报告](https://github.com/cnkids/dsh-office-toolkit/security/advisories/new) 提交,不要发在公开 Issue 里。
 
 本项目基于 [MIT License](LICENSE) 开源。

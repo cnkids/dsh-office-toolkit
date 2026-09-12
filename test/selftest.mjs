@@ -493,6 +493,50 @@ await t('回归: 日期写入后原样回读(不受时区影响)', async () => {
   return `本地时区 ${Intl.DateTimeFormat().resolvedOptions().timeZone} 下回读一致`;
 });
 
+await t('安全: CSV 里的 = 开头内容不会被转成活公式', async () => {
+  const { writeFile, readFile } = await import('node:fs/promises');
+  const csv = join(outDir, 'inject.csv');
+  await writeFile(csv, "名称,值\n恶意,=1+1\nDDE,=cmd|'/c calc'!A0\n", 'utf8');
+  const xlsx = join(outDir, 'inject.xlsx');
+  await office.opConvert(csv, xlsx);
+  const PizZip = (await import('pizzip')).default;
+  const xml = new PizZip(await readFile(xlsx)).file('xl/worksheets/sheet1.xml').asText();
+  const formulas = xml.match(/<f>[^<]*<\/f>/g) || [];
+  if (formulas.length) throw new Error('外部 CSV 被写成了活公式: ' + formulas.join(','));
+  const plain = await office.opRead(xlsx, {});
+  if (!plain.content.includes('=1+1')) throw new Error('原文本丢失: ' + plain.content);
+  return '= / DDE 都保持为文本';
+});
+
+await t('安全: 写入侧仍按文档承诺支持公式', async () => {
+  const buf = await excel.buildWorkbook({ sheets: [{ name: 'S', rows: [['=SUM(1,2)']] }] });
+  const PizZip = (await import('pizzip')).default;
+  const xml = new PizZip(buf).file('xl/worksheets/sheet1.xml').asText();
+  if (!/<f>SUM\(1,2\)<\/f>/.test(xml)) throw new Error('office_write_xlsx 的公式能力被破坏: ' + xml.slice(0, 200));
+  return 'office_write_xlsx 仍写公式(仅转换文本源时中和)';
+});
+
+await t('安全: 临时文件以 0600 写入(不落到公共 tmp 的默认 0644)', async () => {
+  if (!(await converters.hasWordConverter('rtf'))) return '无 rtf 转换器(跳过)';
+  const { readFile, writeFile, unlink, stat } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const calls = [];
+  const spyIo = {
+    async readBuf(pth) { return readFile(pth); },
+    async writeBuf(pth, data, options) { calls.push({ pth, options }); await writeFile(pth, data, options); },
+    async remove(pth) { await unlink(pth).catch(() => {}); },
+    tmpFile(ext) { return join(tmpdir(), `dsh-perm-${Date.now()}${ext}`); },
+    async stat(pth) { const st = await stat(pth); return { size: st.size, type: 'file' }; },
+  };
+  await office.opWriteDocx(join(outDir, 'perm.rtf'), { text: '临时文件权限检查' }, spyIo);
+  const tempWrites = calls.filter((c) => c.pth.startsWith(tmpdir()));
+  if (!tempWrites.length) throw new Error('没有经过临时文件?');
+  for (const w of tempWrites) {
+    if (w.options?.mode !== 0o600) throw new Error(`临时文件权限不是 0600: ${JSON.stringify(w.options)}`);
+  }
+  return `${tempWrites.length} 处临时写入都是 0600`;
+});
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n===== 结果: ${results.length - failed.length}/${results.length} 通过 =====`);
 if (failed.length) {

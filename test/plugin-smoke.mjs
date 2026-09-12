@@ -1,8 +1,10 @@
 // Plugin-adapter smoke test: drives lib/index.js with a fake DSH host ctx
 // (no real cordis needed) and exercises every registered tool end to end.
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, 'out-plugin');
@@ -153,6 +155,19 @@ try {
 }
 const sawAbsent = emitted.slice(beforeAbsent).some(([n, , payload]) => n === 'fs/observed' && payload?.kind === 'absent');
 check('缺失文件报错并标记 absent', /文件不存在/.test(absentMsg) && sawAbsent, absentMsg.slice(0, 40));
+
+// 指向工作区之外的符号链接不得绕过路径围栏(围栏必须解析真实路径)
+const escapeLink = resolve(outDir, 'escape-link');
+await rm(escapeLink, { force: true });
+await symlink(homedir(), escapeLink);
+let linkDenied = false;
+try {
+  await registered.get('office_write_docx').execute({ path: resolve(escapeLink, 'pwned.docx'), markdown: '# x' }, exec);
+} catch (err) {
+  linkDenied = /FS_SANDBOX_DENIED|写入被拒绝/.test(String(err?.message));
+}
+check('符号链接绕行被拒绝', linkDenied, linkDenied ? '' : '❌ 围栏被绕过');
+await rm(escapeLink, { force: true });
 
 console.log('\n日志: ' + logLines.join(' | '));
 const failed = results.filter((r) => !r.ok);
