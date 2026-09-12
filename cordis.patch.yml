@@ -2,10 +2,10 @@
 # profile roster (the config-tree root IS the plugin list). Host-only: the package
 # declares no `dsh.client` half, so nothing is served to the browser.
 #
-# Activate with one of:
-#   dsh plugin --profile web add file:/abs/path/to/dsh-office-tools
-#   cd ~/.dsh/profiles/web && pnpm add file:/abs/path/to/dsh-office-tools
-# then append "dsh-office-toolkit" to dsh.profile.bundles and restart `dsh web`.
+# Activate with:
+#   dsh plugin --profile web add dsh-office-toolkit
+# (`dsh plugin add` registers the name in dsh.profile.bundles automatically;
+#  restart `dsh web` afterwards.)
 - insert:
     - id: dsh-office-toolkit
       name: 'dsh-office-toolkit'

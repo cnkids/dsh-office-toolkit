@@ -44,7 +44,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z ..."
 git push origin main vX.Y.Z     # 推 tag 触发 Actions
 ```
 
-**npm 侧只需配置一次**：先用 `npm login` + `npm publish --registry https://registry.npmjs.org --access public` 手动发一次（包不存在时 npm 页面里没有配置入口），再到包页面 **Settings → Trusted Publisher → GitHub Actions** 填三个值：`cnkids` / `dsh-office-toolkit` / `release.yml`。之后发布不再需要 token，也没有过期问题。
+**npm 侧已配置完毕**：Trusted Publisher 为 `cnkids` / `dsh-office-toolkit` / `release.yml`，发布走 OIDC，**不需要任何 token**（换仓库名或改 workflow 文件名时要同步改这里）。
 
 发布后：`npm view dsh-office-toolkit version` 复核；用户侧安装与更新改为裸包名 `dsh plugin --profile web add dsh-office-toolkit` 与 `dsh plugin --profile web update`。
 

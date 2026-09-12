@@ -54,21 +54,21 @@
 ## 安装
 
 ```sh
-dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/latest/download/dsh-office-toolkit.tgz
+dsh plugin --profile web add dsh-office-toolkit
 ```
 
-这条直链是 GitHub 的固定别名，永远指向最新版，**不需要 git**。装完必须**重启 `dsh web`（或重开桌面端）并新建会话**才会加载。
+装完必须**重启 `dsh web`（或重开桌面端）并新建会话**才会加载。
 
 <details>
-<summary>其它安装方式（有 git / 完全离线 / 本地源码）</summary>
+<summary>其它安装方式（GitHub 直链 / 完全离线 / 本地源码）</summary>
 
 | 场景 | 命令 |
 | --- | --- |
-| 有 git · 跟随 main | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit` |
+| GitHub 直链（不经过 npm） | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/latest/download/dsh-office-toolkit.tgz` |
 | 完全离线 | 解压 `dsh-office-toolkit-offline.zip` 后 `dsh plugin --profile web add link:C:/dsh-office-toolkit` |
 | 本地源码 | `dsh plugin --profile web add link:/path/to/dsh-office-toolkit` |
 
-离线包内含完整 `node_modules`，全程零下载；`.tgz` 只有几十 KB，依赖走 npm registry（内网先配镜像）。目标机器需 **Node ≥ 20** 与 pnpm。
+离线包内含完整 `node_modules`，全程零下载。目标机器需 **Node ≥ 20** 与 pnpm。
 
 ```sh
 dsh --profile web --dump-config | grep -A1 dsh-office-toolkit   # 校验是否加载
@@ -79,21 +79,13 @@ dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 
 ### 更新
 
-**更新请用带版本号的直链**（每次发版 URL 都不同，不会被缓存复用）：
-
 ```sh
-dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/download/vX.Y.Z/dsh-office-toolkit-X.Y.Z.tgz
+dsh plugin --profile web update
 ```
 
-`releases/latest/download/...` 这条捷径的内容会随发版变化，pnpm 可能复用缓存而不刷新（pnpm < 11.10 尤其明显）。若一定要用它，先确认 `pnpm -v` ≥ 11.10，或先 `dsh plugin --profile web remove dsh-office-toolkit` 再 `add`。
+装完重启 `dsh web` 并新建会话。确认版本：启动日志里的 `[dsh-office-toolkit] vX.Y.Z …`，或 profile 里那份 `package.json` 的 `version`。
 
-装完确认版本（或看 DSH 启动日志里的 `[dsh-office-toolkit] vX.Y.Z …`）：
-
-```powershell
-(Get-Content "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-office-toolkit\package.json" | ConvertFrom-Json).version
-```
-
-拉不到新版时，也可以直接下 `-offline.zip` 解压后用 `link:` 安装（不经过 pnpm 依赖解析，最可靠）。一次更新 profile 内全部依赖：`dsh plugin --profile web update`。`link:` 安装不需要 pnpm，源码目录 `git pull` 即最新。
+`link:` 安装不需要 pnpm，源码目录 `git pull` 即最新；GitHub 直链的内容会随发版变化，更新时改用上面这条（或先 `remove` 再 `add`）。
 
 ## 快速上手
 
@@ -150,7 +142,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **离线包自带依赖吗？** 是。`.offline.zip` 内含完整 `node_modules`，且发布前会用 `node test/offline-check.mjs` 校验每个依赖都落在包内（不允许借用 profile 目录）、依赖树无安装脚本；解压后 `link:` 安装全程零下载。
 
-**更新后版本没变？** 用的是内容会变的 `latest` 直链，pnpm 可能复用了缓存。改用带版本号的直链（见「更新」），并确认 `pnpm -v` ≥ 11.10。
+**更新后版本没变？** 跑 `dsh plugin --profile web update`；若用的是 GitHub 直链，先 `dsh plugin --profile web remove dsh-office-toolkit` 再 `add`。
 
 **怎么确认插件版本 / 更新生效了？** 插件启动时会往 DSH 日志打印一行 `[dsh-office-toolkit] vX.Y.Z 已注册 6 个 Office 工具`；也可以直接看 profile 里那份 `package.json` 的 `version`（`dsh --profile web --dump-config` 能看到 profile 目录）。报错信息里也会带插件版本，便于排查。
 
@@ -175,6 +167,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.24** | 安装改用包名 `dsh-office-toolkit`（不再依赖直链），其它方式折叠收起 |
 | **0.3.23** | 发布自动化:推 `v*` tag 由 GitHub Actions 发布 npm 并上传 Release 附件 |
 | **0.3.22** | 文档精简：更新说明只留结论与命令 |
 | **0.3.21** | 文档：更新请用带版本号的直链（`latest` 直链可能被 pnpm 复用缓存） |

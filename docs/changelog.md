@@ -4,6 +4,7 @@
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.24** | 安装/更新改用裸包名 `dsh-office-toolkit`;GitHub 直链、离线包、本地源码收进折叠块;发布流程改为 Trusted Publisher 免 token |
 | **0.3.23** | 加 GitHub Actions:推 `v*` tag 自动校验版本、跑测试、发布 npm(Trusted Publishing,无需 token)并上传 Release 附件 |
 | **0.3.22** | 精简 README 更新说明与版本记录,去掉排查过程叙述 |
 | **0.3.21** | 文档:更新说明改用带版本号的直链,并注明 `latest` 直链可能被 pnpm 复用缓存(需 pnpm ≥ 11.10) |
