@@ -2,11 +2,12 @@
 
 DeepSeek Harness(DSH)**宿主插件**:给 AI 智能体增加读写 Word / Excel 的工具。**跨平台**(macOS / Windows / Linux),核心功能纯 JavaScript 实现,不需要安装 Office 或 LibreOffice。
 
-> 版本 0.2.2 — 补充**在其它机器上的安装方式**(GitHub / 离线 tarball / 源码目录三种),并说明 npm 上 `dsh-office-tools` 包名已被第三方占用、裸包名会装错包的坑。功能与 0.2.1 一致。
+> 版本 0.2.3 — **安全热点清零**:移除全部可能触发超线性回溯(super-linear backtracking,即 ReDoS)的正则,单元格引用 / 范围 / HTML / XML / ODT 的标签与属性解析全部改为**一次前向线性扫描**(新增 `lib/core/markup.js`)。SonarQube 安全热点 8 → **0**,缺陷、漏洞、代码异味均为 **0**,可靠性 · 安全性 · 可维护性全 A。
 
 <details>
 <summary>历史版本</summary>
 
+- **0.2.2** — 补充**在其它机器上的安装方式**(GitHub / 离线 tarball / 源码目录三种),并说明 npm 上 `dsh-office-tools` 包名已被第三方占用、裸包名会装错包的坑。
 - **0.2.1** — 修复**同一工作表写多个图表只有第一个可见**的问题(OOXML 规定一个工作表只能有一个 drawing 部件,现已改为多图表共用一个 drawing);同时做了一轮代码质量治理(0 缺陷 / 0 代码异味,可靠性 · 安全性 · 可维护性均 A 级)。
 - **0.2.0** — 新增 Windows 支持:`.doc`/`.rtf`/`.odt` 读取改为纯 JS 优先,外部转换器按平台自动择优,并修正 Windows 路径大小写不敏感判定。
 
@@ -207,12 +208,12 @@ dsh plugin --profile web add link:/path/to/dsh-office-tools
 
 ```sh
 cd dsh-office-tools
-node test/selftest.mjs        # 核心库 20 项:docx/xlsx/xls/doc/模板/图表/转换端到端
-node test/converters.test.mjs # 跨平台层 13 项:RTF/ODT/word-extractor/路径围栏/后端探测
+node test/selftest.mjs        # 核心库 21 项:docx/xlsx/xls/doc/模板/图表/转换端到端
+node test/converters.test.mjs # 跨平台层 15 项:RTF/ODT/word-extractor/路径围栏/后端探测/回溯安全
 node test/plugin-smoke.mjs    # 插件适配层 31 项:注册、schema、6 个工具调用、沙箱拒绝、报错
 ```
 
-共 **64 项测试**,全部为纯 Node 脚本,不需要测试框架。其中「同表多图表」用例会校验三个图表落在同一个 drawing 部件里、工作表只引用它一次。
+共 **67 项测试**,全部为纯 Node 脚本,不需要测试框架。其中「同表多图表」用例会校验三个图表落在同一个 drawing 部件里、工作表只引用它一次。
 
 修改代码后的生效方式:
 
@@ -230,6 +231,20 @@ node test/plugin-smoke.mjs    # 插件适配层 31 项:注册、schema、6 个�
 
 - HMR 只监听 `cordis.patch.yml` 的行变化,不监听插件源码。
 
+## 安全说明:为什么不再用标签正则
+
+旧实现用 `/<sheet\b[^>]*\/>/`、`/<[^>]+>/g`、`/([A-Za-z]+\d+)/` 这类正则解析 OOXML / HTML / ODT。
+这些模式带有无界量词且分支可重叠,在**精心构造的输入**上会让回溯引擎反复重扫同一段文本,运行时随输入长度
+超线性(甚至指数)增长,足以拖住整个宿主进程 —— SonarQube 会把它报成安全热点 **`S5852`**。
+
+现在这些解析全部改为**单次前向扫描**(`lib/core/markup.js` 的 `readTagAt` / `tagTexts` / `firstTag` /
+`attrValue` / `appendBeforeClose`),配合字符级的等价工具(`extOf`、`a1ToIndexes`、`rangeStartRow` /
+`rangeEndRow`、`singleCellOfRange`、ODT 标签翻译器、HTML 树遍历器)。每个字符只被访问有限次,
+**复杂度是输入长度的 O(n) 上界,与输入内容无关**,不给 ReDoS 留入口。
+
+`test/converters.test.mjs` 里有对应回归用例:20 万字符级的畸形输入(`<aaaa…`、未闭合 `<!--`、超长属性、
+纯字母引用等)必须在毫秒级返回或快速报错。
+
 ## 代码质量
 
 SonarQube 项目 `dsh-office-toll`(https://so.rclandy.com),扫描范围 `lib/` + `test/`:
@@ -239,7 +254,7 @@ export SONAR_TOKEN=<你的 token>
 sonar-scanner        # 读取仓库根目录的 sonar-project.properties
 ```
 
-`sonar-project.properties` 按项目要求不入库(`.gitignore` 已排除)。最近一次分析:0 Bug / 0 漏洞 / 0 代码异味,可靠性 · 安全性 · 可维护性均 A 级。
+`sonar-project.properties` 按项目要求不入库(`.gitignore` 已排除)。最近一次分析:0 Bug / 0 漏洞 / 0 代码异味 / **0 安全热点**,可靠性 · 安全性 · 可维护性均 A 级。
 
 ## 目录结构
 
@@ -258,6 +273,7 @@ dsh-office-tools/
 │       ├── converters.js # 旧 Word 格式公共 API(读/写/探测)
 │       ├── legacy-read.js     # 纯 JS 解析:doc(word-extractor)/rtf/odt
 │       ├── legacy-external.js # 外部转换器:textutil / LibreOffice / Word COM
+│       ├── markup.js     # HTML/XML 标签与属性的线性扫描器(替代有回溯风险的正则)
 │       ├── path-guard.js # 跨平台路径围栏(Windows 大小写不敏感)
 │       ├── md.js         # Markdown↔HTML 与 HTML→Markdown 转换
 │       └── util.js       # 错误类型、体积上限、截断工具

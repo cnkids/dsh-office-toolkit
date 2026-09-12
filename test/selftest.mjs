@@ -184,9 +184,11 @@ await t('excel: 图表 XML 注入(bar/line/pie, 同表多图共用一个 drawing
     if (!parts.includes(e)) throw new Error(`缺少部件 ${e}; 实际: ${parts.join(', ')}`);
   }
   const zip = new PizZip(buf);
-  const refs = zip.file('xl/worksheets/sheet1.xml').asText().match(/<drawing\b[^>]*r:id="rId\d+"\/>/g) || [];
+  const { tagTexts } = await import('../lib/core/markup.js');
+  const refs = tagTexts(zip.file('xl/worksheets/sheet1.xml').asText(), 'drawing')
+    .filter((t) => t.includes('r:id='));
   if (refs.length !== 1) throw new Error(`工作表应只引用 1 个 drawing, 实际 ${refs.length}`);
-  const anchors = zip.file('xl/drawings/drawing1.xml').asText().match(/<xdr:oneCellAnchor>/g) || [];
+  const anchors = tagTexts(zip.file('xl/drawings/drawing1.xml').asText(), 'xdr:oneCellAnchor');
   if (anchors.length !== cases.length) throw new Error(`drawing1 应含 ${cases.length} 个锚点, 实际 ${anchors.length}`);
   const rels = zip.file('xl/drawings/_rels/drawing1.xml.rels').asText();
   for (const n of [1, 2, 3]) {
@@ -227,6 +229,15 @@ await t('excel: 读取指定工作表窗口', async () => {
   if (r.content.includes('销售明细') && r.content.includes('### 工作表「销售明细」')) throw new Error('不应包含其他表');
   if (!r.content.includes('### 工作表「汇总」')) throw new Error('缺少汇总表');
   return '窗口读取正常';
+});
+
+await t('excel: 按 range 限定行列窗口', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const buf = await readFile(xlsxPath);
+  const r = await excel.readWorkbook(buf, { sheets: ['销售明细'], range: 'A1:B2' });
+  if (!r.content.includes('产品') || !r.content.includes('键盘')) throw new Error('range 起始行解析失败: ' + r.content);
+  if (r.content.includes('显示器')) throw new Error('range 结束行未生效: ' + r.content);
+  return 'A1:B2 只返回前两行';
 });
 
 await t('legacy: .xls 导出/读取(SheetJS biff8)', async () => {
