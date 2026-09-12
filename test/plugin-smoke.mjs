@@ -1,6 +1,6 @@
 // Plugin-adapter smoke test: drives lib/index.js with a fake DSH host ctx
 // (no real cordis needed) and exercises every registered tool end to end.
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,7 +9,15 @@ const outDir = join(here, 'out-plugin');
 await mkdir(outDir, { recursive: true });
 
 const registered = new Map();
-let logLines = [];
+const logLines = [];
+const emitted = [];
+// 先以"无 fs 提供者"运行(覆盖回退分支),后面再切到提供者分支
+let useFsProvider = false;
+const fakeFs = {
+  async resolve(raw) { return { displayPath: raw, path: raw }; },
+  async readBytes(target) { return readFile(target.path); },
+  async stat() { return { version: 1 }; },
+};
 const ctx = {
   tools: {
     register(tool) {
@@ -18,8 +26,12 @@ const ctx = {
       return () => registered.delete(tool.name);
     },
   },
-  get(name) { return name === 'tools' ? ctx.tools : undefined; },
-  emit() { /* no observers in smoke */ },
+  get(name) {
+    if (name === 'tools') return ctx.tools;
+    if (name === 'fs' && useFsProvider) return fakeFs;
+    return undefined;
+  },
+  emit(name, ...rest) { emitted.push([name, ...rest]); },
   effect(fn) { const d = fn(); return d; },
   logger: { info: (m) => logLines.push(m), warn: (m) => logLines.push(m) },
 };
@@ -122,6 +134,25 @@ try {
   missingMsg = String(err?.message);
 }
 check('缺失文件报错清晰', /文件不存在|not found|ENOENT/.test(missingMsg), missingMsg.slice(0, 60));
+
+// ---- ctx.fs 提供者分支:解析走 ctx.fs、读取走 readBytes,并发出 fs/observed ----
+useFsProvider = true;
+const viaFs = await registered.get('office_read').execute({ path: docx }, exec);
+check('经 ctx.fs 提供者读取', viaFs.content.includes('冒烟测试'), viaFs.content.split('\n')[0]);
+check('读取后发出 fs/observed', emitted.some(([n]) => n === 'fs/observed'), `事件 ${emitted.length} 条`);
+
+const rendered = registered.get('office_read').output.render([], { content: 'x' });
+check('工具 output.render 可用', Array.isArray(rendered) && rendered[0].text === 'x');
+
+const beforeAbsent = emitted.length;
+let absentMsg = '';
+try {
+  await registered.get('office_read').execute({ path: join(outDir, 'nope.xlsx') }, exec);
+} catch (err) {
+  absentMsg = String(err?.message);
+}
+const sawAbsent = emitted.slice(beforeAbsent).some(([n, , payload]) => n === 'fs/observed' && payload?.kind === 'absent');
+check('缺失文件报错并标记 absent', /文件不存在/.test(absentMsg) && sawAbsent, absentMsg.slice(0, 40));
 
 console.log('\n日志: ' + logLines.join(' | '));
 const failed = results.filter((r) => !r.ok);

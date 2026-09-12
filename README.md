@@ -69,7 +69,7 @@
 | --- | --- |
 | **无 git(推荐)** | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/latest/download/dsh-office-toolkit.tgz` |
 | 有 git · 跟随 main | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit` |
-| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.9` |
+| 有 git · 锁定版本 | `dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.10` |
 | 完全离线 | 解压 `releases/latest/download/dsh-office-toolkit-offline.zip` 后 `dsh plugin --profile web add link:C:/dsh-office-toolkit` |
 | 本地源码 | `dsh plugin --profile web add link:/path/to/dsh-office-toolkit` |
 
@@ -97,7 +97,7 @@ dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 一次更新 profile 内全部依赖:`dsh plugin --profile web update`。
 
 - **`link:` 安装不需要 pnpm**:源码目录 `git pull` 即最新。
-- 装了**带版本号**的 spec(`#v0.3.9` 或 `.../releases/download/v0.3.9/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用固定直链的原因。
+- 装了**带版本号**的 spec(`#v0.3.10` 或 `.../releases/download/v0.3.10/...tgz`)不会自动前进,更新时要换版本号 —— 这也是推荐用固定直链的原因。
 - **更新后必须重启 `dsh web` 并新建会话**,否则看起来像没更新:工具列表与描述只在启动时读取。
 
 ## 用法示例
@@ -191,6 +191,7 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 - 模板填充只做 `{{变量}}` 替换,不支持循环 / 条件(批量套打多次调用即可)。
 - 文档内嵌图片只读不写。
 - `office_convert` 源与目标扩展名相同时:路径不同则原样复制,路径相同则直接返回。
+- CSV / TSV / TXT 按 **UTF-8** 解码(这类格式不自带编码信息);GBK 等其他编码请先转成 UTF-8。
 
 ## 常见问题
 
@@ -224,20 +225,21 @@ DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `des
 ## 本地开发
 
 ```sh
-node test/selftest.mjs        # 核心库 21 项:读写编辑、模板、图表、转换端到端
-node test/converters.test.mjs # 跨平台层 15 项:RTF/ODT/word-extractor/路径围栏/回溯安全
-node test/plugin-smoke.mjs    # 插件适配层 31 项:注册、schema、6 个工具、沙箱拒绝、报错
+npm test           # 三个测试脚本:核心库 34 · 跨平台层 16 · 插件适配层 35,共 85 项
+npm run coverage   # 同上并统计覆盖率,写出 coverage/lcov.info
 ```
 
-共 67 项,纯 Node 脚本,不需要测试框架。profile 当前是 `link:` 安装,改完源码重启 `dsh web` 即生效;若用 `file:` 安装需重新执行一次 `add` 刷新副本(HMR 不监听插件源码)。
+纯 Node 脚本,不需要测试框架。覆盖率(c8):**语句 91.6% / 分支 67.9% / 函数 93.5%**。未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
+
+profile 当前是 `link:` 安装,改完源码重启 `dsh web` 即生效;若用 `file:` 安装需重新执行一次 `add` 刷新副本(HMR 不监听插件源码)。
 
 代码质量走 SonarQube(项目 `dsh-office-toll`;`sonar-project.properties` 不入库):
 
 ```sh
-export SONAR_TOKEN=<token> && sonar-scanner
+export SONAR_TOKEN=<token> && sonar-scanner   # 会读取 coverage/lcov.info
 ```
 
-当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点,可靠性 · 安全性 · 可维护性均 A 级。
+当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点;整体覆盖率 85.4%、新代码覆盖率 88.9%(门槛 80%),质量门通过;可靠性 · 安全性 · 可维护性均 A 级。
 
 ### 发布到 npm(维护者)
 
@@ -262,6 +264,7 @@ npm publish
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.10** | 接入 c8 覆盖率(语句 91.6%);修 3 个 bug:CSV 读出乱码、`office_edit_xlsx` 的 `sheet` 序号基准、日期回读差一天 |
 | **0.3.9** | README 改版:居中标题与徽章、导航、常见问题、工作方式图、版本记录 |
 | **0.3.8** | 补充「更新」说明:重跑同一条 `add` 即可更新 |
 | **0.3.7** | 强化工具描述,让智能体优先用本插件读写 Office 文件 |

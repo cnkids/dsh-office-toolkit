@@ -1,7 +1,7 @@
 {
   "name": "dsh-office-toolkit",
   "description": "DSH host plugin: cross-platform Word/Excel (docx/xlsx/doc/xls) read & write agent tools built on mammoth, html-to-docx, exceljs, SheetJS and word-extractor, with optional textutil/LibreOffice/Word converters.",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -41,8 +41,8 @@
     "dsh-plugin"
   ],
   "dependencies": {
-    "docxtemplater": "^3.69.3",
     "@e965/xlsx": "^0.20.3",
+    "docxtemplater": "^3.69.3",
     "exceljs": "^4.4.0",
     "html-to-docx": "^1.8.0",
     "mammoth": "^1.12.2",
@@ -52,5 +52,12 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "c8": "^12.0.0"
+  },
+  "scripts": {
+    "test": "node test/selftest.mjs && node test/converters.test.mjs && node test/plugin-smoke.mjs",
+    "coverage": "rm -rf coverage && c8 --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/selftest.mjs && c8 --clean=false --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/converters.test.mjs && c8 --clean=false --include=lib/** --exclude=test/** --reporter=text-summary --reporter=lcov node test/plugin-smoke.mjs"
   }
 }

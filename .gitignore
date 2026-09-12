@@ -7,6 +7,9 @@ dist/
 # 临时试验目录(探针、npm 缓存等)
 .probe/
 
+# 覆盖率产物
+coverage/
+
 # 测试生成的二进制样例(每次跑测试都会重建)
 test/out/
 test/out-converters/

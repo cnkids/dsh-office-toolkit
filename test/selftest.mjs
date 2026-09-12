@@ -8,7 +8,8 @@ import * as word from '../lib/core/word.js';
 import * as excel from '../lib/core/excel.js';
 import * as legacy from '../lib/core/legacy.js';
 import * as converters from '../lib/core/converters.js';
-import { htmlToMarkdown } from '../lib/core/md.js';
+import { htmlToMarkdown, plainTextToHtml } from '../lib/core/md.js';
+import { CAPS } from '../lib/core/util.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, 'out');
@@ -328,6 +329,168 @@ await t('office_read 顶层: 全格式探测', async () => {
   const r2 = await office.opRead(xlsxPath, { sheets: ['汇总'] });
   if (!r2.content.includes('汇总')) throw new Error('xlsx 读取失败');
   return 'docx+xlsx 顶层读取 OK';
+});
+
+// ---------------------------------------------------------------------------
+// 错误分支 / 未被主流程用到的编辑操作
+// ---------------------------------------------------------------------------
+await t('excel: 增删行列 / 行高 / 重命名 / 删表全覆盖', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const buf = await excel.buildWorkbook({
+    sheets: [
+      { name: 'A', header: true, rows: [['h1', 'h2'], [1, 2], [3, 4]] },
+      { name: 'B', rows: [['x']] },
+    ],
+  });
+  const { buf: out, changes } = await excel.editWorkbook(buf, [
+    { op: 'insert_rows', sheet: 'A', at: 2, count: 2 },
+    { op: 'delete_rows', sheet: 'A', at: 5, count: 1 },
+    { op: 'insert_cols', sheet: 'A', at: 2, count: 1 },
+    { op: 'delete_cols', sheet: 'A', at: 4, count: 1 },
+    { op: 'set_row_height', sheet: 'A', row: 1, height: 30 },
+    { op: 'rename_sheet', sheet: 'B', name: 'B2' },
+    { op: 'delete_sheet', sheet: 'B2' },
+    { op: 'set_col_width', sheet: 'A', col: 'A', width: 20 },
+  ]);
+  await writeFile(join(outDir, 'ops.xlsx'), out);
+  const want = ['insert_rows', 'delete_rows', 'insert_cols', 'delete_cols', 'set_row_height', 'rename_sheet', 'delete_sheet', 'set_col_width'];
+  for (const op of want) if (!changes.includes(op)) throw new Error('未执行 ' + op);
+  const back = await excel.readWorkbook(out, {});
+  if (back.meta.sheetNames.includes('B2')) throw new Error('B2 未被删除');
+  return `${want.length} 个操作全部执行`;
+});
+
+await t('excel: 未知操作 / 无效引用 / 非法 start 报错', async () => {
+  const buf = await excel.buildWorkbook({ sheets: [{ name: 'S', rows: [['a']] }] });
+  const msgOf = async (ops) => { try { await excel.editWorkbook(buf, ops); return ''; } catch (err) { return err.message; } };
+  const m1 = await msgOf([{ op: 'nope' }]);
+  if (!/未知操作类型/.test(m1)) throw new Error('未知操作未报错: ' + m1);
+  const m2 = await msgOf([{ op: 'set_value', sheet: 'S', ref: '??', value: 1 }]);
+  if (!/无效单元格引用/.test(m2)) throw new Error('无效引用未报错: ' + m2);
+  const m3 = await msgOf([{ op: 'set_cells', start: 'X', values: [[1]] }]);
+  if (!/start/.test(m3)) throw new Error('set_cells start 未报错: ' + m3);
+  const m4 = await msgOf([{ op: 'set_cells', values: 'nope' }]);
+  if (!/values/.test(m4)) throw new Error('set_cells values 未报错: ' + m4);
+  return '四类参数错误都可读';
+});
+
+await t('excel: date: / num: 前缀写入', async () => {
+  const buf = await excel.buildWorkbook({ sheets: [{ name: 'S', rows: [['date:2026-09-09', 'num:1,234.5']] }] });
+  const r = await excel.readWorkbook(buf, {});
+  if (!r.content.includes('2026-09-09')) throw new Error('日期未写入: ' + r.content);
+  if (!r.content.includes('1234.5')) throw new Error('num: 未生效: ' + r.content);
+  return '两种前缀都生效';
+});
+
+await t('word: 损坏 / 空 / 缺内容源 / 超限的报错', async () => {
+  let threw = false;
+  try { await word.readDocx(Buffer.from('not a docx')); } catch { threw = true; }
+  if (!threw) throw new Error('损坏 docx 未报错');
+  const msgOf = async (fn) => { try { await fn(); return ''; } catch (err) { return err.message; } };
+  const e2 = await msgOf(() => word.writeDocx({ markdown: '   ' }));
+  if (!/内容为空/.test(e2)) throw new Error('空 markdown 未报错: ' + e2);
+  const e3 = await msgOf(() => word.writeDocx({}));
+  if (!/html \/ markdown \/ text/.test(e3)) throw new Error('缺内容源未报错: ' + e3);
+  if (word.writeDocx({ markdown: '# x' }, { title: 't' }) === undefined) throw new Error('未返回 promise');
+  let code = '';
+  try { await word.readDocx(Buffer.alloc(CAPS.MAX_WORD_INPUT_BYTES + 1)); } catch (err) { code = err.code; }
+  if (code !== 'OFFICE_TOO_LARGE') throw new Error('超大 docx 未被拒绝: ' + code);
+  return '5 类异常输入都能明确报错';
+});
+
+await t('word: 模板语法错误被捕获', async () => {
+  const bad = await word.writeDocx({ markdown: '{{#each}} 没有闭合' });
+  let msg = '';
+  try { await word.fillDocxTemplate(bad, {}); } catch (err) { msg = err.message; }
+  if (!/模板渲染失败/.test(msg)) throw new Error('未报模板渲染失败: ' + msg);
+  return '模板语法错误被捕获并说明原因';
+});
+
+await t('md: plainTextToHtml 与块级元素', async () => {
+  const html = plainTextToHtml('第一行\n第二行\n\n第二段 & <tag>');
+  if (!html.includes('&amp;') || !html.includes('&lt;tag&gt;')) throw new Error('未转义: ' + html);
+  if (!html.includes('<br/>')) throw new Error('未换行: ' + html);
+  const md = htmlToMarkdown('<blockquote><p>引用</p></blockquote><pre>代码块</pre><hr/><p>甲<br/>乙</p><p><img src="a.png" alt="图"/></p>');
+  for (const want of ['> 引用', '```', '---', '甲', '![图](a.png)']) {
+    if (!md.includes(want)) throw new Error(`缺少 ${want}: ${md}`);
+  }
+  return 'plainTextToHtml + 5 类块级元素正常';
+});
+
+await t('office: 缺失 / 目录 / 不支持格式的报错', async () => {
+  const { mkdir } = await import('node:fs/promises');
+  const msgOf = async (fn) => { try { await fn(); return ''; } catch (err) { return err.code || err.message; } };
+  const c1 = await msgOf(() => office.opRead(join(outDir, 'missing.xlsx'), {}));
+  if (c1 !== 'NOT_FOUND') throw new Error('缺失文件未报 NOT_FOUND: ' + c1);
+  const asDir = join(outDir, 'dir.xlsx');
+  await mkdir(asDir, { recursive: true });
+  const c2 = await msgOf(() => office.opRead(asDir, {}));
+  if (c2 !== 'NOT_A_FILE') throw new Error('目录未报 NOT_A_FILE: ' + c2);
+  const c3 = await msgOf(() => office.opRead(join(outDir, 'note.md'), {}));
+  if (c3 !== 'UNSUPPORTED_FORMAT') throw new Error('md 未报 UNSUPPORTED_FORMAT: ' + c3);
+  return 'NOT_FOUND / 不是文件 / 不支持格式 都正确';
+});
+
+await t('legacy: .csv 读取与 .rtf 写出读回', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const csv = join(outDir, 'plain.csv');
+  await writeFile(csv, '产品,数量\n键盘,10\n', 'utf8');
+  const r = await office.opRead(csv, {});
+  if (!r.content.includes('键盘')) throw new Error('csv 读取失败: ' + r.content);
+  if (!(await converters.hasWordConverter('rtf'))) return 'csv 读取 OK;无 rtf 转换器(跳过写出)';
+  const rtf = join(outDir, 'plain.rtf');
+  const w = await office.opWriteDocx(rtf, { text: '第一段\n\n第二段' });
+  const back = await office.opRead(rtf, {});
+  if (!back.content.includes('第一段')) throw new Error('rtf 读回失败: ' + back.content);
+  return `csv 读取 + rtf 写出读回(${w.meta.via})`;
+});
+
+await t('converters: backendSummary 可用', async () => {
+  const summary = await converters.backendSummary();
+  if (typeof summary !== 'string' || !summary.length) throw new Error('摘要为空');
+  return summary;
+});
+
+await t('charts: 带引号的工作表名', async () => {
+  const { injectChart } = await import('../lib/core/charts.js');
+  const PizZip = (await import('pizzip')).default;
+  const buf = await excel.buildWorkbook({ sheets: [{ name: '销售 明细', header: true, rows: [['季度', '额'], ['Q1', 10], ['Q2', 20]] }] });
+  const out = await injectChart(buf, {
+    sheet: '销售 明细', chartType: 'bar', categories: "'销售 明细'!A2:A3",
+    series: [{ range: 'B2:B3', label: 'B1' }], anchor: 'E2',
+  });
+  const xml = new PizZip(out).file('xl/charts/chart1.xml').asText();
+  if (!xml.includes("'销售 明细'!A2:A3")) throw new Error('带引号表名未正确处理: ' + xml.slice(0, 160));
+  return '引号包裹的工作表名解析正确';
+});
+
+await t('markup: 属性查找不会误配后缀', async () => {
+  const { attrIn, attrValue, readTagAt, appendBeforeClose } = await import('../lib/core/markup.js');
+  if (attrIn(' xname="1" name="2"', 'name') !== '2') throw new Error('后缀误配: ' + attrIn(' xname="1" name="2"', 'name'));
+  if (attrValue('<a href=\'x\' name="n">', 'name') !== 'n') throw new Error('单引号属性解析失败');
+  if (readTagAt('<a href="含>符号">', 0).attrs !== ' href="含>符号"') throw new Error('引号内 > 解析失败');
+  if (appendBeforeClose('<r></r>  ', 'r', 'X') !== '<r>X</r>  ') throw new Error('尾部空白未保留');
+  if (appendBeforeClose('<r></r>tail', 'r', 'X') !== '<r></r>tail') throw new Error('非结尾不应插入');
+  return '属性查找 / 引号内 > / 尾部插入 都正确';
+});
+
+
+await t('回归: sheet 序号从 1 开始', async () => {
+  const buf = await excel.buildWorkbook({
+    sheets: [{ name: '第一张', rows: [['a']] }, { name: '第二张', rows: [['b']] }],
+  });
+  const { buf: out } = await excel.editWorkbook(buf, [{ op: 'set_value', sheet: 1, ref: 'B1', value: '标在1号表' }]);
+  const r = await excel.readWorkbook(out, {});
+  const first = r.tsvBySheet['第一张'] || '';
+  if (!first.includes('标在1号表')) throw new Error('sheet:1 未命中第一张表: ' + JSON.stringify(r.tsvBySheet));
+  return 'sheet:1 → 第一张表';
+});
+
+await t('回归: 日期写入后原样回读(不受时区影响)', async () => {
+  const buf = await excel.buildWorkbook({ sheets: [{ name: 'S', rows: [['date:2026-09-09']] }] });
+  const r = await excel.readWorkbook(buf, {});
+  if (!r.content.includes('2026-09-09')) throw new Error('日期回读不一致: ' + r.content);
+  return `本地时区 ${Intl.DateTimeFormat().resolvedOptions().timeZone} 下回读一致`;
 });
 
 const failed = results.filter((r) => !r.ok);

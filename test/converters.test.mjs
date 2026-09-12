@@ -73,7 +73,7 @@ await t('RTF: readRtf 读取文件(文本/HTML 两种模式)', async () => {
 // ---------------------------------------------------------------------------
 const ODT_CONTENT = `<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:xlink="http://www.w3.org/1999/xlink">
-<office:automatic-styles><style:style xmlns:style="x"/></office:automatic-styles>
+<office:automatic-styles><style:style xmlns:style="x"/><text:note>批注应被丢弃</text:note></office:automatic-styles>
 <office:body><office:text>
 <text:h text:outline-level="1">季度报告</text:h>
 <text:h text:outline-level="2">二级标题</text:h>
@@ -92,6 +92,7 @@ await t('ODT: content.xml → HTML(标题/段落/列表/表格/链接)', async (
   assert(html.includes('<td><p>键盘</p></td>'), '表格映射失败: ' + html);
   assert(html.includes('<a href="https://example.com">链接文字</a>'), '链接映射失败');
   assert(!html.includes('style:style'), 'automatic-styles 未清理');
+  assert(!html.includes('批注应被丢弃'), '嵌套 skip 块未清理: ' + html);
   return `${html.length} 字符`;
 });
 
@@ -230,6 +231,20 @@ await t('安全: 超长畸形图表引用快速失败', async () => {
   if (!threw) throw new Error('畸形引用应当报错');
   if (ms > 2000) throw new Error(`畸形引用耗时 ${ms}ms，疑似回溯`);
   return `超长畸形引用 ${ms}ms 内失败`;
+});
+
+await t('所有后端都失败时报聚合错误并列出尝试过的后端', async () => {
+  const missing = join(outDir, 'no-such-file.odt');
+  let msg = '';
+  try {
+    await wordRead(missing);
+  } catch (err) {
+    msg = String(err?.message);
+  }
+  assert(/无法读取 \.odt/.test(msg), '未给出聚合错误: ' + msg);
+  assert(/纯 JS 解析/.test(msg), '未列出纯 JS 回退: ' + msg);
+  assert(/textutil|LibreOffice/.test(msg), '未列出外部后端: ' + msg);
+  return msg.split('。')[0].slice(0, 48);
 });
 
 const failed = results.filter((r) => !r.ok);
