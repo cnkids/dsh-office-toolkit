@@ -6,7 +6,7 @@
 
 **安装**:`dsh plugin --profile web add github:cnkids/dsh-office-toolkit`,重启 `dsh web` 后新建会话。
 
-> **0.3.6** 把 `xlsx` 换成无已知 high 漏洞的 `@e965/xlsx@0.20.3`(见「依赖与已知告警」)。**0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
+> **0.3.7** 强化工具描述,让智能体优先用本插件读写 Office 文件(见「让智能体优先使用本插件」)。**0.3.6** 把 `xlsx` 换成无已知 high 漏洞的 `@e965/xlsx@0.20.3`。**0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
 
 ## 工具
 
@@ -55,6 +55,21 @@ dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 ```
 
 目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm(见「开发 → 发布到 npm」,暂未发布)。
+
+## 让智能体优先使用本插件
+
+DSH 的工具注册**没有优先级设置**,模型只依据每个工具的 `description` 选择;而内置 `read` / `write` / `edit` 只处理 UTF-8 文本,读 `.docx` 会直接返回 `Error: binary file`,且不会提示该换哪个工具。本插件已把「哪类文件必须用本工具」写在每个描述最前面,并把 `Word / Excel / 文档 / 表格 / .docx / .xlsx` 等词作为触发提示,通常一次就能选对。
+
+想更保险,在**用户级指令文件** `~/.dsh/AGENTS.md` 里加一段(该文件对所有项目、所有会话生效):
+
+```markdown
+## 文件读写
+- 读取 .docx/.doc/.rtf/.odt/.xlsx/.xls/.xlsb/.ods/.csv/.tsv 一律用 `office_read`。
+- 创建/修改用 `office_write_docx` / `office_write_xlsx` / `office_edit_xlsx` / `office_fill_docx_template`,格式转换用 `office_convert`。
+- 不要用通用 `read`/`write`/`edit` 处理这些文件 —— 它们只能处理 UTF-8 文本。
+```
+
+改完重启 `dsh web` 并新建会话生效。
 
 ## 用法示例
 

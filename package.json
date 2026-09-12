@@ -1,7 +1,7 @@
 {
   "name": "dsh-office-toolkit",
   "description": "DSH host plugin: cross-platform Word/Excel (docx/xlsx/doc/xls) read & write agent tools built on mammoth, html-to-docx, exceljs, SheetJS and word-extractor, with optional textutil/LibreOffice/Word converters.",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
