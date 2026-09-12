@@ -5,11 +5,11 @@
 ## 本地开发
 
 ```sh
-npm test           # 三个测试脚本：核心库 57 · 跨平台层 16 · 插件适配层 36，共 109 项
+npm test           # 三个测试脚本：核心库 60 · 跨平台层 16 · 插件适配层 36，共 112 项
 npm run coverage   # 同上并统计覆盖率，写出 coverage/lcov.info
 ```
 
-纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 93.8% / 分支 73.5% / 函数 95.2%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
+纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 93.7% / 分支 73.7% / 函数 95.0%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
 
 `link:` 安装改完源码重启 `dsh web` 即生效；`file:` / `github:` 安装需重跑一次 `add` 刷新副本（HMR 不监听插件源码）。
 
@@ -38,7 +38,8 @@ npm publish
 2. 跑三个测试脚本 + SonarQube，确认质量门通过；
 3. 提交、打 tag、push：`git tag -a vX.Y.Z -m "..." && git push origin main vX.Y.Z`；
 4. `npm pack` 产出 `.tgz`；把关目录连同 `node_modules`（先 `npm install --omit=dev`）打包成 `-offline.zip`；
-5. **离线包完整性必须过门禁**（见下节），再建 Release 上传 **4 个附件**：带版本号与不带版本号各一份 `.tgz` 与 `-offline.zip`（不带版本号的两份供 `releases/latest/download/` 固定别名使用）。
+5. 上传的资产里**带版本号的那份是可靠的更新通道**（`latest` 直链 URL 不变，pnpm 会复用缓存，用户可能装到旧版）；同时**必须**在启动日志与报错里带上版本号，便于用户确认更新是否生效；
+6. **离线包完整性必须过门禁**（见下节），再建 Release 上传 **4 个附件**：带版本号与不带版本号各一份 `.tgz` 与 `-offline.zip`（不带版本号的两份供 `releases/latest/download/` 固定别名使用）。
 
 ## 离线包完整性（发布门禁）
 

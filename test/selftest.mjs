@@ -10,6 +10,7 @@ import * as legacy from '../lib/core/legacy.js';
 import * as converters from '../lib/core/converters.js';
 import { htmlToMarkdown, plainTextToHtml } from '../lib/core/md.js';
 import { htmlToDocxBuffer } from '../lib/core/docx-writer.js';
+import { resolveMainPart } from '../lib/core/word.js';
 import { extractDocxFormat, formatReport } from '../lib/core/docx-format.js';
 import { CAPS, assertOfficeBinary } from '../lib/core/util.js';
 import { CORE_DEPS, depFailure, lazyModule, missingDeps } from '../lib/core/deps.js';
@@ -991,6 +992,73 @@ await t('兼容: mammoth 解析不了时用内置解析器兜底(不硬失败)',
   const hr = await office.opRead(p, { format: 'html' });
   if (!String(hr.html || hr.content).includes('兜底正文内容')) throw new Error('html 输出缺失');
   return 'mammoth 失败后内置解析器成功兜底';
+});
+
+await t('兼容: 主文档部件不在规范路径时按包关系解析', async () => {
+  const PizZip = (await import('pizzip')).default;
+  const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const relsNs = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"';
+  const docWith = (text) => `<w:document ${NS}><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`;
+  const base = new PizZip(await word.writeDocx({ markdown: '占位' }));
+
+  // 主部件放在 word/main.xml,由 _rels/.rels 指过去(规范名不存在)
+  const custom = new PizZip(base.generate({ type: 'nodebuffer' }));
+  custom.file('word/main.xml', docWith('关系解析到的正文'));
+  custom.file('word/document.xml', '');           // 规范名存在但为空
+  custom.file('_rels/.rels', `<?xml version="1.0"?><Relationships ${relsNs}><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/main.xml"/></Relationships>`);
+  const main = resolveMainPart(new PizZip(custom.generate({ type: 'nodebuffer' })));
+  if (main?.path !== 'word/main.xml') throw new Error('未按关系解析主部件: ' + JSON.stringify(main?.path));
+
+  // 没有关系文件时退回规范名
+  const plain = new PizZip(base.generate({ type: 'nodebuffer' }));
+  plain.remove('_rels/.rels');
+  const fallback = resolveMainPart(new PizZip(plain.generate({ type: 'nodebuffer' })));
+  if (fallback?.path !== 'word/document.xml') throw new Error('未退回规范名: ' + JSON.stringify(fallback?.path));
+
+  // 规范名缺失时按「以 document.xml 结尾」容忍查找
+  const odd = new PizZip(base.generate({ type: 'nodebuffer' }));
+  odd.remove('_rels/.rels');
+  odd.remove('word/document.xml');
+  odd.file('Word/Sub/Document.XML', docWith('容忍查找'));
+  const tolerant = resolveMainPart(new PizZip(odd.generate({ type: 'nodebuffer' })));
+  if (tolerant?.path !== 'Word/Sub/Document.XML') throw new Error('容忍查找失败: ' + JSON.stringify(tolerant?.path));
+  return '关系解析 / 规范名回退 / 容忍查找 三条路径均正确';
+});
+
+await t('诊断: 无法识别的容器报错列出条目与插件版本', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const PizZip = (await import('pizzip')).default;
+  const zip = new PizZip();
+  zip.file('hello.txt', 'not office');
+  zip.file('[Content_Types].xml', '<Types/>');
+  const p = join(outDir, 'not-office-2.docx');
+  await writeFile(p, zip.generate({ type: 'nodebuffer' }));
+  try {
+    await office.opRead(p, {});
+    throw new Error('损坏文件却读成功了');
+  } catch (err) {
+    if (err.code !== 'BAD_CONTAINER') throw err;
+    for (const needle of ['插件 v', 'hello.txt']) {
+      if (!err.message.includes(needle)) throw new Error(`诊断缺少「${needle}」: ${err.message}`);
+    }
+  }
+  return '报错含插件版本与实际条目名';
+});
+
+await t('兼容: 主部件由关系声明在非规范路径时也能读', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const PizZip = (await import('pizzip')).default;
+  const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const relsNs = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"';
+  const zip = new PizZip(new PizZip(await word.writeDocx({ markdown: '占位' })).generate({ type: 'nodebuffer' }));
+  zip.file('word/main.xml', `<w:document ${NS}><w:body><w:p><w:r><w:t>关系声明的正文</w:t></w:r></w:p></w:body></w:document>`);
+  zip.remove('word/document.xml');
+  zip.file('_rels/.rels', `<?xml version="1.0"?><Relationships ${relsNs}><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/main.xml"/></Relationships>`);
+  const p = join(outDir, 'custom-main.docx');
+  await writeFile(p, zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  const r = await office.opRead(p, {});
+  if (!String(r.content).includes('关系声明的正文')) throw new Error('未按关系读到正文: ' + String(r.content).slice(0, 80));
+  return '主部件在 word/main.xml 也能正常读取';
 });
 
 const failed = results.filter((r) => !r.ok);

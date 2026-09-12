@@ -79,7 +79,25 @@ dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 
 ### 更新
 
-**重跑上面那条 `add` 就是更新**；一次更新 profile 内全部依赖用 `dsh plugin --profile web update`。带了版本号的 spec（`#vX.Y.Z`）不会自动前进，这也是推荐固定直链的原因。`link:` 安装不需要 pnpm，源码目录 `git pull` 即最新。
+**重跑同一条 `add` 不一定能拿到新版。** `releases/latest/download/...` 这个 URL 永远不变，而 pnpm 会按 URL 锁定完整性并优先复用本地缓存 —— 典型表现是 `reused … downloaded 0`、命令显示成功、但装的还是旧版（我们就踩过：明明发了新版，机器上仍是 `0.3.7`）。
+
+可靠的做法：
+
+| 做法 | 命令 |
+| --- | --- |
+| **推荐：带版本号的直链**（每次发版 URL 都不同，不会被缓存复用） | `dsh plugin --profile web add https://github.com/cnkids/dsh-office-toolkit/releases/download/vX.Y.Z/dsh-office-toolkit-X.Y.Z.tgz` |
+| 仍想用 `latest` 直链 | 先 `dsh plugin --profile web remove dsh-office-toolkit`，再 `add` 一次；若 pnpm 提示完整性不一致，按它的提示在 profile 目录执行 `pnpm install --update-checksums` |
+
+**装完请确认版本**，否则可能白折腾：
+
+```powershell
+# Windows：看 profile 里实际装的那份
+(Get-Content "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-office-toolkit\package.json" | ConvertFrom-Json).version
+```
+
+更省事的是看 DSH 启动日志 —— 插件加载时会打印 `[dsh-office-toolkit] vX.Y.Z 已注册 6 个 Office 工具`。
+
+一次更新 profile 内全部依赖用 `dsh plugin --profile web update`。`link:` 安装不需要 pnpm，源码目录 `git pull` 即最新。
 
 ## 快速上手
 
@@ -136,6 +154,10 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **离线包自带依赖吗？** 是。`.offline.zip` 内含完整 `node_modules`，且发布前会用 `node test/offline-check.mjs` 校验每个依赖都落在包内（不允许借用 profile 目录）、依赖树无安装脚本；解压后 `link:` 安装全程零下载。
 
+**更新后版本没变 / 提示 `reused … downloaded 0`？** pnpm 按 URL 复用了缓存，`latest` 直链永远指向同一个 URL，所以不会自动刷新。改用带版本号的直链（`.../releases/download/vX.Y.Z/dsh-office-toolkit-X.Y.Z.tgz`），或先 `dsh plugin --profile web remove dsh-office-toolkit` 再重新 `add`。
+
+**怎么确认插件版本 / 更新生效了？** 插件启动时会往 DSH 日志打印一行 `[dsh-office-toolkit] vX.Y.Z 已注册 6 个 Office 工具`；也可以直接看 profile 里那份 `package.json` 的 `version`（`dsh --profile web --dump-config` 能看到 profile 目录）。报错信息里也会带插件版本，便于排查。
+
 **某份文件读不出来？** 插件已按**真实内容**判断格式：非标准 zip（条目名含反斜杠）、改过后缀的文件（`.doc` 里其实是 docx、`.xlsx` 里其实是 CSV 等）都会自动按实际格式读取并给出提示。若报 `BAD_CONTAINER`，错误信息会列出文件里的实际条目，便于判断它到底是什么。详见[用法与参数](docs/usage.md#读取兼容性)。
 
 **转 PDF 报错？** `.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word，纯 JS 不提供 PDF 渲染；写出 `.doc` / `.odt` 同理。各格式保真度见[平台支持](docs/platform.md)。
@@ -157,6 +179,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.20** | 主文档部件按包关系解析（非规范路径也能读）；启动日志与报错带上插件版本 |
 | **0.3.19** | 部件名大小写不同也能读（连同引用一起归一化）；mammoth 认不出时重打包重试、再不行用内置解析器兜底 |
 | **0.3.18** | 修 0.3.17 回归：读取非标准文件时报 `Cannot add property containerNote`（宿主参数是冻结的）；改为不改写调用方参数 |
 | **0.3.17** | 读取兼容性：非标准 zip（条目名含反斜杠）自动修正、按真实内容识别改过后缀的文件；修正默认样式解析 bug |

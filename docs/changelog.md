@@ -4,6 +4,8 @@
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.20** | 修正文档里错误的更新指引:`latest` 直链 URL 不变,pnpm 会锁定完整性并复用缓存(表现为 `reused … downloaded 0`、装的还是旧版);推荐改用带版本号的直链,并给出确认版本的命令 |
+| **0.3.20** | 主文档部件改为按**包关系**(`_rels/.rels` 的 officeDocument)解析,规范名缺失或放在非规范路径也能读;启动日志与报错里带上插件版本(便于确认更新是否生效);无法识别的容器报错列出实际条目与版本 |
 | **0.3.19** | 继续修「读不出来」:部件名大小写不同(`Word/Document.xml`,Windows 常见)时,连同 `[Content_Types].xml` 与 `*.rels` 里的引用一起归一化;mammoth 认不出时先用 PizZip 重打包重试,仍失败则用内置解析器从 `word/document.xml` 取正文(在 `meta.reader` 标明读法);xlsx 同样加重新打包重试 |
 | **0.3.18** | 修 0.3.17 的回归:`office_read` 会往调用方参数上写 `containerNote`,而 DSH 传入的参数是冻结的,导致**恰好是那些需要修复的非标准文件**读取时报 `Cannot add property containerNote, object is not extensible`。改为不改调用方参数,并把「冻结参数下 6 个操作都必须正常」固化为测试 |
 | **0.3.17** | 读取兼容性:自动修正非标准 zip(条目名含反斜杠)后读取;按文件真实内容识别被改过后缀的 docx/OLE doc/CSV/TSV;无 Office 主文档时报 `BAD_CONTAINER` 并列出实际条目。修正 0.3.16 的默认样式解析 bug(`attrOf` 对缺失属性返回空串,导致所有段落都套用了最后一个样式) |
