@@ -814,6 +814,83 @@ await t('格式: 主题字体与隐式默认样式(Word 默认模板的真实写
   return '默认样式 + Calibri/宋体(script=Hans) + 12pt + 1.5 倍行距 均正确';
 });
 
+// ---- 读取兼容性(真实文件里常见的各种「不标准」) ----
+await t('兼容: 非标准 zip(条目名带反斜杠)也能读并提取格式', async () => {
+  const PizZip = (await import('pizzip')).default;
+  const { writeFile } = await import('node:fs/promises');
+  const good = await word.writeDocx({ markdown: '# 标题\n\n正文内容' });
+  const out = new PizZip();
+  for (const [name, entry] of Object.entries(new PizZip(good).files)) {
+    if (!entry.dir) out.file(name.replaceAll('/', '\\'), entry.asNodeBuffer());
+  }
+  const p = join(outDir, 'backslash.docx');
+  await writeFile(p, out.generate({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  const r = await office.opRead(p, { withFormatting: true });
+  if (!String(r.content).includes('正文内容')) throw new Error('正文没读出来');
+  if (!r.meta.formatting?.paragraphs?.length) throw new Error('格式未提取');
+  if (!String(r.content).includes('自动修正')) throw new Error('未提示自动修复了条目名');
+  return '反斜杠条目名:自动修复后可正常读取与提取格式';
+});
+
+await t('兼容: 改过后缀的文件按真实内容读取', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  // 1) docx 内容,名字却是 .doc
+  const docx = await word.writeDocx({ markdown: '# 真身是 docx' });
+  const fakeDoc = join(outDir, 'really-docx.doc');
+  await writeFile(fakeDoc, docx);
+  const r1 = await office.opRead(fakeDoc, {});
+  if (!String(r1.content).includes('真身是 docx')) throw new Error('未按 docx 内容读取');
+  if (!String(r1.content).includes('文件内容其实是 .docx')) throw new Error('未提示实际格式');
+  // 2) CSV 内容,名字却是 .xlsx
+  const fakeXlsx = join(outDir, 'really-csv.xlsx');
+  await writeFile(fakeXlsx, Buffer.from('产品,数量\n键盘,10\n', 'utf8'));
+  const r2 = await office.opRead(fakeXlsx, {});
+  if (!String(r2.content).includes('键盘')) throw new Error('未按 CSV 内容读取');
+  if (!String(r2.content).includes('分隔符文本')) throw new Error('未提示分隔符文本');
+  // 3) 制表符文本,名字是 .xlsx → 按 tsv
+  const fakeTsv = join(outDir, 'really-tsv.xlsx');
+  await writeFile(fakeTsv, Buffer.from('产品\t数量\n键盘\t10\n', 'utf8'));
+  const r3 = await office.opRead(fakeTsv, {});
+  if (!String(r3.content).includes('TSV')) throw new Error('制表符文本未识别为 TSV');
+  return 'docx→.doc / CSV→.xlsx / TSV→.xlsx 均按真实内容读取';
+});
+
+await t('兼容: OLE 老格式伪装成 .docx 时按 .doc 处理', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const ole = Buffer.concat([
+    Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+    Buffer.alloc(4096),
+  ]);
+  const p = join(outDir, 'really-doc.docx');
+  await writeFile(p, ole);
+  try {
+    await office.opRead(p, {});
+    throw new Error('内容无效却没报错');
+  } catch (err) {
+    if (/不是有效的 docx/.test(err.message)) throw new Error('仍按 docx 解压,未按 OLE 处理: ' + err.message);
+    if (err.code === 'BAD_CONTAINER') throw new Error('不应报 BAD_CONTAINER');
+  }
+  return 'OLE 头被识别为老格式,不再当作 docx 解压';
+});
+
+await t('兼容: zip 里没有 Office 主文档时报错可读(列出实际条目)', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const PizZip = (await import('pizzip')).default;
+  const zip = new PizZip();
+  zip.file('hello.txt', 'not office');
+  zip.file('[Content_Types].xml', '<Types/>');
+  const p = join(outDir, 'not-office.docx');
+  await writeFile(p, zip.generate({ type: 'nodebuffer' }));
+  try {
+    await office.opRead(p, {});
+    throw new Error('损坏文件却读成功了');
+  } catch (err) {
+    if (err.code !== 'BAD_CONTAINER') throw err;
+    if (!err.message.includes('hello.txt')) throw new Error('未列出实际条目: ' + err.message);
+  }
+  return '报 BAD_CONTAINER 并列出实际条目,便于判断文件真身';
+});
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n===== 结果: ${results.length - failed.length}/${results.length} 通过 =====`);
 if (failed.length) {

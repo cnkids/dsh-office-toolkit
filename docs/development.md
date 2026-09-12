@@ -5,11 +5,11 @@
 ## 本地开发
 
 ```sh
-npm test           # 三个测试脚本：核心库 50 · 跨平台层 16 · 插件适配层 36，共 102 项
+npm test           # 三个测试脚本：核心库 54 · 跨平台层 16 · 插件适配层 36，共 106 项
 npm run coverage   # 同上并统计覆盖率，写出 coverage/lcov.info
 ```
 
-纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 93.5% / 分支 70.8% / 函数 94.8%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
+纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 93.8% / 分支 73.0% / 函数 95.0%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
 
 `link:` 安装改完源码重启 `dsh web` 即生效；`file:` / `github:` 安装需重跑一次 `add` 刷新副本（HMR 不监听插件源码）。
 
