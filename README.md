@@ -6,7 +6,7 @@
 
 **安装**:`dsh plugin --profile web add github:cnkids/dsh-office-toolkit`,重启 `dsh web` 后新建会话。
 
-> **0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
+> **0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
 
 ## 工具
 
@@ -54,7 +54,7 @@ dsh --profile web --dump-config | grep -A1 dsh-office-toolkit   # 校验
 dsh plugin --profile web remove dsh-office-toolkit              # 卸载
 ```
 
-目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm(暂未发布)。
+目标机器需要 Node ≥ 18 和 pnpm;`.tgz` 不含依赖,仍需能访问 npm registry(内网先配镜像)。裸包名 `add dsh-office-toolkit` 需先发布到 npm(见「开发 → 发布到 npm」,暂未发布)。
 
 ## 用法示例
 
@@ -133,6 +133,15 @@ export SONAR_TOKEN=<token> && sonar-scanner
 ```
 
 当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点,可靠性 · 安全性 · 可维护性均 A 级。
+
+### 发布到 npm(维护者)
+
+```sh
+npm login --registry https://registry.npmjs.org/   # 首次,需要 npm 账号 + 2FA
+npm publish
+```
+
+`package.json` 的 `publishConfig.registry` 已固定为官方源,所以 `npm publish` **不受 `~/.npmrc` 里国内镜像的影响**(镜像只能读不能发,不加这行会报 `ENEEDAWAUTH` / 403)。发布后裸包名 `dsh plugin --profile web add dsh-office-toolkit` 即可用。
 
 ## 设计说明
 

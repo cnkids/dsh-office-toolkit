@@ -1,12 +1,23 @@
 {
   "name": "dsh-office-toolkit",
   "description": "DSH host plugin: cross-platform Word/Excel (docx/xlsx/doc/xls) read & write agent tools built on mammoth, html-to-docx, exceljs, SheetJS and word-extractor, with optional textutil/LibreOffice/Word converters.",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cnkids/dsh-office-toolkit.git"
+  },
+  "homepage": "https://github.com/cnkids/dsh-office-toolkit#readme",
+  "bugs": {
+    "url": "https://github.com/cnkids/dsh-office-toolkit/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
   },
   "dsh": {
     "bundle": {
