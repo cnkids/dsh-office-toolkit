@@ -241,7 +241,7 @@ await t('excel: 按 range 限定行列窗口', async () => {
 });
 
 await t('legacy: .xls 导出/读取(SheetJS biff8)', async () => {
-  const XLSX = await import('xlsx');
+  const XLSX = await import('@e965/xlsx');
   const ws = XLSX.utils.aoa_to_sheet([['名称', '数值'], ['项目A', 100], ['项目B', 200]]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '数据');

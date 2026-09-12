@@ -6,7 +6,7 @@
 
 **安装**:`dsh plugin --profile web add github:cnkids/dsh-office-toolkit`,重启 `dsh web` 后新建会话。
 
-> **0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
+> **0.3.6** 把 `xlsx` 换成无已知 high 漏洞的 `@e965/xlsx@0.20.3`(见「依赖与已知告警」)。**0.3.5** 补齐 npm 元数据(repository / homepage / bugs)并把发布源固定为官方 registry。**0.3.4** 新增永不过期的安装直链 `releases/latest/download/dsh-office-toolkit.tgz`。**0.3.3** 补充无 git / 完全离线机器的安装方式。**0.3.2** 精简文档。**0.3.1** 仓库名与包名统一为 `dsh-office-toolkit`。**0.3.0** 安全热点清零(见「设计说明」)。**0.2.x** 修复同表多图表丢失、新增 Windows 支持。
 
 ## 工具
 
@@ -146,6 +146,13 @@ npm publish
 ## 设计说明
 
 解析 OOXML / HTML / ODT 时没有用 `/<[^>]+>/g`、`/([A-Za-z]+\d+)/` 这类正则:它们带无界量词且分支可重叠,在构造输入上会让回溯引擎反复重扫同一段文本,耗时随输入超线性增长(ReDoS,SonarQube `S5852`)。现在统一走 `lib/core/markup.js` 的一次前向扫描,每个字符只被访问有限次,**复杂度是输入长度的 O(n) 上界,与输入内容无关**。`test/converters.test.mjs` 覆盖 20 万字符级畸形输入,要求毫秒级返回或快速报错。
+
+## 依赖与已知告警
+
+- **`xlsx` 用的是 `@e965/xlsx@0.20.3`**:npm 上的 `xlsx` 停在 `0.18.5`,带 Prototype Pollution(`GHSA-4r6h-8v6p-xvw6`)与 ReDoS(`GHSA-5pgg-2g8v-p4x9`)两个 high;SheetJS 早已停止在 npm 发布,修复版只在其官方 CDN。但官方 CDN 的 URL 形式依赖会被 pnpm 的 `blockExoticSubdeps` 判为 exotic 子依赖而拒绝安装,所以改用 npm 上该官方构建的自动转发包(月下载 300 万+,仓库 [sheetjs-npm-publisher](https://github.com/e965/sheetjs-npm-publisher))。包名不同,故代码里 `import('@e965/xlsx')`。
+- **其余 `npm audit` 告警无法修复**:`image-size`(经 html-to-docx;受影响 `<=2.0.2`,而 npm 最新就是 2.0.2,上游暂无修复版)、`uuid`(经 exceljs;漏洞路径是 v3/v5/v6 带 `buf` 参数,exceljs 只用 v4)。
+- **pnpm 提示的 deprecated 子依赖**(`fstream` `glob` `inflight` `lodash.isequal` `rimraf`,有时还有 `uuid`)全部来自 `exceljs@4.4.0` —— npm 上的最新稳定版(2023-10)。逐个核对公告:`inflight` / `rimraf` / `lodash.isequal` 零公告;`glob@7.2.3` 不在其公告范围(公告针对 CLI 10.2–10.4 / 11.0);`fstream@1.0.12` 本身即修复版;`uuid` 的漏洞路径(见上)不可达。**exceljs 没有更新版本,插件侧也无法用 overrides 干预**(pnpm/npm 的 overrides 只在根项目生效,DSH 的根是 profile 目录),所以这些告警无法消除,也不影响安全。
+- 想让 pnpm 不再打印这些告警,安装时加 `--loglevel=error`,或在 `~/.dsh/profiles/web/.npmrc` 写一行 `loglevel=error`(会连进度输出一起隐藏)。
 
 ## 目录结构
 
