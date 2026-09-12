@@ -2,13 +2,16 @@
 
 DeepSeek Harness(DSH)**宿主插件**:给 AI 智能体增加读写 Word / Excel 的工具。**跨平台**(macOS / Windows / Linux),核心功能纯 JavaScript 实现,不需要安装 Office 或 LibreOffice。
 
-> 版本 0.3.0 — 包名由 `dsh-office-tools` 改为 **`dsh-office-toolkit`**(npm 上原名已被第三方占用),安装命令与 bundle id 随之变化,见「安装」。功能与 0.2.3 一致。
+> 版本 0.3.1 — GitHub 仓库名同步改为 **`dsh-office-toolkit`**,与包名一致;安装命令统一为
+> `dsh plugin --profile web add github:cnkids/dsh-office-toolkit`(旧仓库地址仍会 301 重定向)。
+> 功能与 0.3.0 一致。
 >
-> 0.2.3 — **安全热点清零**:移除全部可能触发超线性回溯(super-linear backtracking,即 ReDoS)的正则,单元格引用 / 范围 / HTML / XML / ODT 的标签与属性解析全部改为**一次前向线性扫描**(新增 `lib/core/markup.js`)。SonarQube 安全热点 8 → **0**,缺陷、漏洞、代码异味均为 **0**,可靠性 · 安全性 · 可维护性全 A。
+> 0.3.0 — **安全热点清零**:移除全部可能触发超线性回溯(super-linear backtracking,即 ReDoS)的正则,单元格引用 / 范围 / HTML / XML / ODT 的标签与属性解析全部改为**一次前向线性扫描**(新增 `lib/core/markup.js`)。SonarQube 安全热点 8 → **0**,缺陷、漏洞、代码异味均为 **0**,可靠性 · 安全性 · 可维护性全 A。
 
 <details>
 <summary>历史版本</summary>
 
+- **0.3.0** — 包名由 `dsh-office-tools` 改为 **`dsh-office-toolkit`**(npm 上原名已被第三方占用),安装命令与 bundle id 随之变化。
 - **0.2.2** — 补充**在其它机器上的安装方式**(GitHub / 离线 tarball / 源码目录三种),并说明 npm 上 `dsh-office-tools` 包名已被第三方占用、裸包名会装错包的坑(0.3.0 起包名已改为 `dsh-office-toolkit`)。
 - **0.2.1** — 修复**同一工作表写多个图表只有第一个可见**的问题(OOXML 规定一个工作表只能有一个 drawing 部件,现已改为多图表共用一个 drawing);同时做了一轮代码质量治理(0 缺陷 / 0 代码异味,可靠性 · 安全性 · 可维护性均 A 级)。
 - **0.2.0** — 新增 Windows 支持:`.doc`/`.rtf`/`.odt` 读取改为纯 JS 优先,外部转换器按平台自动择优,并修正 Windows 路径大小写不敏感判定。
@@ -54,7 +57,7 @@ Windows 上**不装任何 Office 软件**也能:读 `.doc/.rtf/.odt`、读写 `.
 
 ## 安装
 
-包名是 **`dsh-office-toolkit`**;本仓库目录名与 GitHub 仓库名仍是 `dsh-office-tools`(没改仓库)。用 DSH 自带命令安装到 web profile:
+包名、GitHub 仓库名统一为 **`dsh-office-toolkit`**(只有本机克隆下来的**文件夹名**还叫 `dsh-office-tools`,与安装无关)。用 DSH 自带命令安装到 web profile:
 
 ```sh
 dsh plugin --profile web add file:/Users/cnkids/Project/ElectronProj/dsh-office-tools
@@ -93,26 +96,27 @@ DSH 没有独立的 `install` 子命令,装插件统一走 `dsh plugin --profile
 ### 方式一:GitHub(推荐,免手动拷贝)
 
 ```sh
-dsh plugin --profile web add github:cnkids/dsh-office-tools          # 跟随 main
-dsh plugin --profile web add github:cnkids/dsh-office-tools#v0.3.0   # 锁定版本
+dsh plugin --profile web add github:cnkids/dsh-office-toolkit          # 跟随 main
+dsh plugin --profile web add github:cnkids/dsh-office-toolkit#v0.3.1   # 锁定版本
 ```
 
-> 这里写的是 **GitHub 仓库名**(`dsh-office-tools`),不是包名。pnpm 装完后按包内 `package.json` 的
-> **真实包名** `dsh-office-toolkit` 记账,所以 `dsh.profile.bundles` 里出现的是 `dsh-office-toolkit`。
+> 仓库名与包名现在都是 `dsh-office-toolkit`。pnpm 装完后按包内 `package.json` 的**真实包名**记账,
+> 所以 `dsh.profile.bundles` 里出现的就是 `dsh-office-toolkit`。(旧地址 `github:cnkids/dsh-office-tools`
+> 仍然可用,GitHub 会 301 重定向到新仓库。)
 
 ### 方式二:离线 tarball(内网 / 访问不到 GitHub)
 
 在开发机上打包,把 `.tgz` 拷到目标机器:
 
 ```sh
-npm pack                                                       # 产出 dsh-office-toolkit-0.3.0.tgz(约 41 KB)
-dsh plugin --profile web add file:/path/to/dsh-office-toolkit-0.3.0.tgz
+npm pack                                                       # 产出 dsh-office-toolkit-0.3.1.tgz(约 41 KB)
+dsh plugin --profile web add file:/path/to/dsh-office-toolkit-0.3.1.tgz
 ```
 
 ### 方式三:直接指向源码目录(仅开发机之间)
 
 ```sh
-dsh plugin --profile web add link:/path/to/dsh-office-tools   # 目录名仍叫 dsh-office-tools
+dsh plugin --profile web add link:/path/to/dsh-office-toolkit  # 路径按你实际克隆的目录名
 ```
 
 ### 前置条件与注意事项
@@ -264,7 +268,7 @@ sonar-scanner        # 读取仓库根目录的 sonar-project.properties
 ## 目录结构
 
 ```
-dsh-office-tools/          # 仓库/目录名;包名是 dsh-office-toolkit
+dsh-office-toolkit/        # 仓库/包名;本机克隆目录名可能仍是 dsh-office-tools
 ├── package.json          # name: dsh-office-toolkit;dsh.bundle.patch 指向 cordis.patch.yml
 ├── cordis.patch.yml      # 把插件行插入 profile 插件列表
 ├── lib/
