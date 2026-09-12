@@ -1,0 +1,73 @@
+name: Release
+
+# 推 v* tag 即自动:校验版本 → 跑测试 → 发布 npm(Trusted Publishing/OIDC,无需 token)
+# → 建 Release 并上传 4 个附件(带/不带版本号的 .tgz 与 -offline.zip)
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # 建 Release 与上传附件
+  id-token: write   # npm Trusted Publishing(OIDC)必需
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted Publishing 要求 npm ≥ 11.5.1,runner 自带的偏旧
+      - name: 升级 npm
+        run: npm install -g npm@latest
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG 与 package.json $PKG 不一致"
+            exit 1
+          fi
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 测试(核心 + 跨平台 + 插件冒烟)
+        run: npm test
+
+      - name: 依赖完整性校验
+        run: npm run verify:offline
+
+      - name: 发布到 npm
+        run: npm publish --provenance --access public
+
+      - name: 打包 tgz 与离线包
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          npm pack
+          cp "dsh-office-toolkit-$V.tgz" dsh-office-toolkit.tgz
+          mkdir -p offline && git archive HEAD | tar -x -C offline
+          (cd offline && npm install --omit=dev --no-audit --no-fund)
+          (cd offline && rm -rf node_modules/.cache node_modules/.package-lock.json \
+            && zip -qr ../dsh-office-toolkit-offline.zip .)
+          cp dsh-office-toolkit-offline.zip "dsh-office-toolkit-$V-offline.zip"
+          ls -la ./*.tgz ./*.zip
+
+      - name: 建 Release 并上传附件
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" \
+            "dsh-office-toolkit-$V.tgz" dsh-office-toolkit.tgz \
+            "dsh-office-toolkit-$V-offline.zip" dsh-office-toolkit-offline.zip \
+            --clobber

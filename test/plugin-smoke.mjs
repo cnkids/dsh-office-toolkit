@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// .doc 写出依赖外部转换器(macOS textutil / LibreOffice / Word);
+// 没有时跳过相关断言,好让 CI 的 Linux runner 也能跑这一套
+const { hasWordConverter } = await import('../lib/core/converters.js');
+const canWriteDoc = await hasWordConverter('doc').catch(() => false);
 const outDir = join(here, 'out-plugin');
 await mkdir(outDir, { recursive: true });
 
@@ -120,9 +124,13 @@ const r6 = await registered.get('office_fill_docx_template').execute(
 const r6b = await registered.get('office_read').execute({ path: filled }, exec);
 check('office_fill_docx_template', r6.content.includes('已按模板生成') && r6b.content.includes('SO-2026-88'), r6.content.split('\n')[0]);
 
-const r7 = await registered.get('office_convert').execute({ sourcePath: docx, outputPath: conv }, exec);
-const r7b = await registered.get('office_read').execute({ path: conv }, exec);
-check('office_convert(docx→doc) + 读回', r7.content.includes('转换完成') && r7b.content.includes('冒烟测试'), r7.content.split('\n')[0]);
+if (canWriteDoc) {
+  const r7 = await registered.get('office_convert').execute({ sourcePath: docx, outputPath: conv }, exec);
+  const r7b = await registered.get('office_read').execute({ path: conv }, exec);
+  check('office_convert(docx→doc) + 读回', r7.content.includes('转换完成') && r7b.content.includes('冒烟测试'), r7.content.split('\n')[0]);
+} else {
+  check('office_convert(docx→doc) + 读回', true, '无外部转换器,跳过');
+}
 
 // containment fence: writes outside workspace/tmp must be denied
 let denied = false;

@@ -34,12 +34,21 @@ npm publish
 
 ## 发版（维护者）
 
-1. 改 `package.json` 版本号，并同步 [README](../README.md#版本记录) 与[版本记录](changelog.md)；
-2. 跑三个测试脚本 + SonarQube，确认质量门通过；
-3. 提交、打 tag、push：`git tag -a vX.Y.Z -m "..." && git push origin main vX.Y.Z`；
-4. `npm pack` 产出 `.tgz`；把关目录连同 `node_modules`（先 `npm install --omit=dev`）打包成 `-offline.zip`；
-5. 上传的资产里**带版本号的那份是可靠的更新通道**（`latest` 直链 URL 不变，pnpm 会复用缓存，用户可能装到旧版）；同时**必须**在启动日志与报错里带上版本号，便于用户确认更新是否生效；
-6. **离线包完整性必须过门禁**（见下节），再建 Release 上传 **4 个附件**：带版本号与不带版本号各一份 `.tgz` 与 `-offline.zip`（不带版本号的两份供 `releases/latest/download/` 固定别名使用）。
+推 `v*` tag 即自动完成 —— `.github/workflows/release.yml` 会：校验 tag 与 `package.json` 版本一致 → 跑三套测试与依赖完整性校验 → 发布到 npm（Trusted Publishing / OIDC，**无需任何 token**）→ 建 Release 并上传 4 个附件。
+
+```sh
+# 1. 改 package.json 版本号,并同步 README「版本记录」与 docs/changelog.md
+# 2. 本地先过一遍:npm test && npm run verify:offline && sonar-scanner
+git commit -am "vX.Y.Z <类型>: <说明>"
+git tag -a vX.Y.Z -m "vX.Y.Z ..."
+git push origin main vX.Y.Z     # 推 tag 触发 Actions
+```
+
+**npm 侧只需配置一次**：先用 `npm login` + `npm publish --registry https://registry.npmjs.org --access public` 手动发一次（包不存在时 npm 页面里没有配置入口），再到包页面 **Settings → Trusted Publisher → GitHub Actions** 填三个值：`cnkids` / `dsh-office-toolkit` / `release.yml`。之后发布不再需要 token，也没有过期问题。
+
+发布后：`npm view dsh-office-toolkit version` 复核；用户侧安装与更新改为裸包名 `dsh plugin --profile web add dsh-office-toolkit` 与 `dsh plugin --profile web update`。
+
+**离线包与 `.tgz` 也由 Actions 构建上传**（`git archive` + `npm install --omit=dev` + zip），本地无需再手工打包。
 
 ## 离线包完整性（发布门禁）
 
