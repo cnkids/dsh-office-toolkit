@@ -1,0 +1,11 @@
+# dsh-office-tools bundle patch: inserts the host-only tool plugin row into the
+# profile roster (the config-tree root IS the plugin list). Host-only: the package
+# declares no `dsh.client` half, so nothing is served to the browser.
+#
+# Activate with one of:
+#   dsh plugin --profile web add file:/abs/path/to/dsh-office-tools
+#   cd ~/.dsh/profiles/web && pnpm add file:/abs/path/to/dsh-office-tools
+# then append "dsh-office-tools" to dsh.profile.bundles and restart `dsh web`.
+- insert:
+    - id: dsh-office-tools
+      name: 'dsh-office-tools'

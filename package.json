@@ -1,0 +1,45 @@
+{
+  "name": "dsh-office-tools",
+  "description": "DSH host plugin: cross-platform Word/Excel (docx/xlsx/doc/xls) read & write agent tools built on mammoth, html-to-docx, exceljs, SheetJS and word-extractor, with optional textutil/LibreOffice/Word converters.",
+  "version": "0.2.1",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "office",
+    "word",
+    "excel",
+    "docx",
+    "xlsx",
+    "dsh-plugin"
+  ],
+  "dependencies": {
+    "docxtemplater": "^3.69.3",
+    "exceljs": "^4.4.0",
+    "html-to-docx": "^1.8.0",
+    "mammoth": "^1.12.2",
+    "marked": "^18.0.12",
+    "pizzip": "^3.2.0",
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

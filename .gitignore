@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 测试生成的二进制样例(每次跑测试都会重建)
+test/out/
+test/out-converters/
+test/out-plugin/
+
+# SonarQube(配置与分析产物不入库)
+sonar-project.properties
+.scannerwork/
+.sonar/
+
+# AI 助手规范与本地会话产物
+AGENTS.md
+.agents/
+.superpowers/
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 日志与临时文件
+*.log
+npm-debug.log*
