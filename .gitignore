@@ -1,6 +1,9 @@
 # 依赖
 node_modules/
 
+# 本地构建产物(tarball / 离线包)
+dist/
+
 # 测试生成的二进制样例(每次跑测试都会重建)
 test/out/
 test/out-converters/
