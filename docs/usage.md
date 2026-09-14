@@ -23,12 +23,55 @@
 
 Word 正文默认以 Markdown 风格文本返回；Excel 以 TSV 代码块返回，可用 `sheets` / `range` / `maxRows` / `maxCols` 分段读取大表。
 
+**只看内容**用 `office_read`；**要算**（求和 / 分组 / 筛选 / 去重 / 排序）用 [`office_query`](#计算office_query) —— 后者不会把整张表读进上下文。
+
 ```json
 { "path": "报告.docx" }
 { "path": "报告.docx", "format": "html" }
 { "path": "销售.xlsx", "sheets": ["明细"], "range": "A1:F100" }
 { "path": "明细.csv", "maxRows": 50 }
 ```
+
+## 计算（office_query）
+
+在文件内做筛选 / 分组 / 聚合 / 排序，**只把结论返回**。全表扫描，不受 `office_read` 的行窗口限制；支持 `.xlsx .xls .xlsb .ods .csv .tsv`。
+
+```json
+{ "path": "订单.xlsx", "groupBy": ["地区"], "aggregate": [{"col": "金额", "fn": "sum", "as": "销售额"}], "orderBy": [{"col": "销售额", "dir": "desc"}] }
+{ "path": "订单.xlsx", "where": [{"col": "地区", "op": "in", "value": ["华东", "华南"]}, {"col": "金额", "op": "gt", "value": 1000}], "aggregate": [{"col": "金额", "fn": "avg"}, {"col": "订单号", "fn": "countDistinct", "as": "订单数"}] }
+{ "path": "订单.xlsx" }
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `sheet` | 工作表名或从 1 开始的序号，默认第 1 个 |
+| `headerRow` | 表头行号，默认 1；表头不在第一行就传行号，没有表头传 `0`（列名取 `A`/`B`/`C`…） |
+| `where` | 条件数组，多条件为 **AND**；算子 `eq ne gt gte lt lte contains startsWith endsWith in notIn isBlank notBlank` |
+| `groupBy` | 分组列，如 `["地区","产品"]`；只给 `groupBy` 时输出每组行数 |
+| `aggregate` | 汇总项 `[{col, fn, as}]`，`fn` 取 `sum avg min max count countDistinct`；不给 `groupBy` 时是一行全表汇总 |
+| `orderBy` | 排序 `[{col, dir}]`，`col` 可用分组列或汇总结果列 |
+| `limit` | 结果行数上限，默认 200，最大 2000；超出会写明「共 N 组，仅显示前 M 组」 |
+
+**不给 `groupBy` / `aggregate` 时返回表结构画像**：每列的类型（数字 / 日期 / 文本 / 混合 / 空）、非空、空值、去重数、最小 / 最大 / 求和 / 均值、最高频的 3 个取值与次数 —— 一次调用就知道这张表长什么样，不用先读一遍再想怎么问。画像同样接受 `where`，可以只看子集。
+
+数值识别做的是"尽力而为"：`1,234.00`、`¥88`、`12.5%`（→ `0.125`）、全角空格都能认；日期把 `2025/1/1`、`2025年1月1日`、带时间的写法统一成 `YYYY-MM-DD` 再比较。反过来，**认不出就报错或跳过，绝不猜**：
+
+- `sum` / `avg` 跳过非数值单元格，并在结果下方写明跳过了几个（不会静默当成 0）。
+- 某一组一个数值都没有时，`sum` / `avg` 返回空单元格而不是 `0`。
+- 一边能解析成数字、另一边不能（如「金额」列里混着"待定"）时判为**不可比**，`>` / `=` 一律不成立 —— 否则字典序会让"待定" > 1000 静默成立。
+- 列名写错、算子写错都会直接报错，并列出全部可用列名 / 合法算子。
+- 文本排序按 Unicode 码位（结果确定，不依赖系统的排序规则）；中文不等于拼音序。
+
+### 什么时候该退回脚本
+
+本工具只做**声明式**操作。以下需求它覆盖不了，请照常写 Python 或别的办法：
+
+- 跨文件 / 跨表的 join、关联、比对；
+- 透视表、窗口函数、累计值、同比环比；
+- 中位数、分位数、标准差、回归等统计量；
+- 图表、可视化、导出报告。
+
+一句话：**表格的筛选与汇总先问 `office_query`，它答不了再写脚本。**
 
 ## 新建
 
@@ -94,7 +137,8 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 - **路径**：绝对路径，或相对会话工作区的路径；写入默认只允许会话工作区与系统临时目录，越界返回 `FS_SANDBOX_DENIED`。
 - **单元格值**：数字 / 布尔原样；`=` 开头视为公式；`date:2026-09-09` 写入日期；`num:1,234.5` 强制数字。
 - **样式**：`{bold, italic, fontSize, color, fill, align, valign, wrap, numFmt, border}`（颜色为 `RRGGBB`）。
-- **截断**：大表默认 400 行 × 60 列、Word 正文默认 90000 字符，超出会截断并提示用参数分段读。
+- **截断**：大表默认 400 行 × 60 列、Word 正文默认 90000 字符，超出会截断并提示用参数分段读（要全表统计请改用 `office_query`）。`office_query` 扫描上限 20 万行 × 200 列，超出会明确告知只统计了前 N 行。
+- **结果规模**：`office_query` 的结果默认最多 200 行、6 位有效小数内取整；`limit` 上限 2000。
 - **输入体积**：`.docx` 40 MB、`.xlsx` 60 MB；三者都是 zip，解压后总量超过 **1 GiB** 或压缩比超过 **150:1** 会按「疑似压缩炸弹」拒绝（`ZIP_BOMB_SUSPECTED`）。
 
 ## 限制
@@ -150,7 +194,7 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 
 ## 工具参数
 
-以下是 6 个工具注册到 DSH 的完整参数表（由工具 schema 自动导出）。
+以下是 7 个工具注册到 DSH 的完整参数表（由工具 schema 自动导出）。
 
 ### `office_read`
 
@@ -166,6 +210,21 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 | `maxChars` | integer | — | Word 正文返回字符上限，默认 90000 |
 | `format` | enum: `text` / `html` | — | Word 输出格式：text=Markdown 风格（默认），html=原始 HTML |
 | `withFormatting` | boolean | — | 仅 .docx：额外返回格式报告 —— 每段的字体(中文/西文)、字号、行距(固定值/倍数)、首行缩进、对齐、样式名，以及页面尺寸与页边距；并给出格式分布(主流值)与偏离主流的段落。用于比对行文规则(如"正文三号仿宋、行距固定值 28.8 磅")。结构化数据在 meta.formatting。 |
+
+### `office_query`
+
+在表格文件内直接算（.xlsx .xls .xlsb .ods .csv .tsv）：全表扫描，只把结论返回，几万行不必读进上下文。表格数据的求和/均值/计数/去重/分组/排序/条件筛选，优先用本工具而不是临时写脚本；返回的内容是结果表，不是原始数据。不给 groupBy/aggregate 时返回**表结构画像**。本工具覆盖范围之外的需求（跨文件 join、透视表、窗口函数、图表、统计建模）再另想办法。列名取表头行（headerRow，默认第 1 行）；条件算子：eq/ne/gt/gte/lt/lte/contains/startsWith/endsWith/in/notIn/isBlank/notBlank；聚合函数：sum/avg/min/max/count/countDistinct（数值列能识别 ¥1,234.00、12.5% 这类写法）。
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `path` | string | ✅ | 文件路径。可用绝对路径，或相对会话工作区的路径。 |
+| `sheet` | — | — | 工作表名或从 1 开始的序号，默认第 1 个工作表 |
+| `headerRow` | integer | — | 表头行号，默认 1；传 0 表示没有表头（列名自动取 A/B/C…） |
+| `where` | array<object> | — | 筛选条件（多个条件为 AND），如 `[{"col":"地区","op":"eq","value":"华东"}]`；`col` 必填，`op` 默认 eq，`value` 为比较值（`in`/`notIn` 传数组，`isBlank`/`notBlank` 不需要） |
+| `groupBy` | array<string> | — | 按这些列分组，如 `["地区","产品"]`；只给 `groupBy` 时输出每组的行数 |
+| `aggregate` | array<object> | — | 汇总项 `[{col, fn, as}]`；`fn` 取 sum/avg/min/max/count/countDistinct，`as` 为结果列名（默认 `fn(列名)`） |
+| `orderBy` | array<object> | — | 排序如 `[{"col":"销售额","dir":"desc"}]`，`dir` 取 asc/desc（默认 asc） |
+| `limit` | integer | — | 结果行数上限，默认 200，最大 2000 |
 
 ### `office_write_docx`
 

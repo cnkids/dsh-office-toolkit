@@ -31,7 +31,8 @@
 
 - **纯 JS，开箱可用** —— 不装 Office / LibreOffice 就能读写 `.docx` `.xlsx` `.xls` `.csv`，Windows 上同样零依赖。
 - **读写改一条龙** —— 新建文档、新建工作簿、编辑已有工作簿（样式 / 合并 / 冻结 / 筛选 / 图片 / 图表）、`{{变量}}` 模板套打、跨格式转换。
-- **6 个工具自动注册** —— 见[工具](#工具)；描述里前置了文件类型关键字，智能体一次就能选对。
+- **7 个工具自动注册** —— 见[工具](#工具)；描述里前置了文件类型关键字，智能体一次就能选对。
+- **大表直接算，不用先搬数据** —— `office_query` 在文件内做筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行也只返回结论；不给条件时返回表结构画像。
 - **公式与日期是真的** —— `=` 开头写公式，`date:2026-09-09` 写日期，日期回读不受时区影响。
 - **排版格式可读** —— `.docx` 传 `withFormatting: true` 即返回每段的字体 / 字号 / 行距 / 首行缩进 / 对齐与页面页边距（含 `basedOn` 继承链、隐式默认样式与主题字体），并给出格式分布和偏离主流的段落，用于比对行文规则。见[用法与参数](docs/usage.md#读取排版格式行文规则比对)。
 - **默认安全** —— 写入经 DSH 沙箱围栏（含 realpath 校验），文本来源中和公式注入，解析全走线性扫描（无 ReDoS），不联网、不常驻后台、依赖树无安装脚本。见[安全说明](docs/security.md)。
@@ -43,6 +44,7 @@
 | 工具 | 作用 |
 | --- | --- |
 | `office_read` | 读取 `.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv`（Excel 以 TSV 返回；`.docx` 可选返回排版格式报告） |
+| `office_query` | 在表格文件内计算：条件筛选、分组、求和/均值/计数/去重、排序、表结构画像 —— 只返回结论 |
 | `office_write_docx` | 新建文档（html / markdown / text） |
 | `office_write_xlsx` | 新建工作簿（多表、表头、公式、日期、样式） |
 | `office_edit_xlsx` | 编辑已有工作簿（单元格 / 样式 / 合并 / 行列 / 冻结 / 筛选 / 图片 / 图表） |
@@ -130,7 +132,7 @@ dsh plugin --profile web update
 
 DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `description` 选择；而内置 `read` / `write` / `edit` 只处理 UTF-8 文本，读 `.docx` 会直接返回 `Error: binary file`，也不会提示该换哪个工具。本插件已把「哪类文件必须用本工具」写在每个描述最前面。
 
-想更保险，在**用户级指令文件** `~/.dsh/AGENTS.md`（对所有项目与会话生效）里加一句：Office 文件一律用 `office_read` / `office_write_*` / `office_edit_xlsx` / `office_fill_docx_template` / `office_convert`，不要用通用 `read`/`write`/`edit`。该文件热加载，保存即生效。
+想更保险，在**用户级指令文件** `~/.dsh/AGENTS.md`（对所有项目与会话生效）里加一句：Office 文件一律用 `office_read` / `office_query` / `office_write_*` / `office_edit_xlsx` / `office_fill_docx_template` / `office_convert`，不要用通用 `read`/`write`/`edit`；表格的统计与筛选先用 `office_query`，别为几行汇总临时写脚本。该文件热加载，保存即生效。
 
 ## 常见问题
 
@@ -144,9 +146,11 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **更新后版本没变？** 跑 `dsh plugin --profile web update`；若用的是 GitHub 直链，先 `dsh plugin --profile web remove dsh-office-toolkit` 再 `add`。
 
-**怎么确认插件版本 / 更新生效了？** 插件启动时会往 DSH 日志打印一行 `[dsh-office-toolkit] vX.Y.Z 已注册 6 个 Office 工具`；也可以直接看 profile 里那份 `package.json` 的 `version`（`dsh --profile web --dump-config` 能看到 profile 目录）。报错信息里也会带插件版本，便于排查。
+**怎么确认插件版本 / 更新生效了？** 插件启动时会往 DSH 日志打印一行 `[dsh-office-toolkit] vX.Y.Z 已注册 7 个 Office 工具`；也可以直接看 profile 里那份 `package.json` 的 `version`（`dsh --profile web --dump-config` 能看到 profile 目录）。报错信息里也会带插件版本，便于排查。
 
 **某份文件读不出来？** 插件已按**真实内容**判断格式：非标准 zip（条目名含反斜杠）、改过后缀的文件（`.doc` 里其实是 docx、`.xlsx` 里其实是 CSV 等）都会自动按实际格式读取并给出提示。若报 `BAD_CONTAINER`，错误信息会列出文件里的实际条目，便于判断它到底是什么。详见[用法与参数](docs/usage.md#读取兼容性)。
+
+**几万行的表怎么统计？** 用 `office_query`，它在文件内算完只回结论，不需要把整张表读进上下文。例如按地区求和、按金额倒序取前 20、只看某段时间的数据，都是一次调用；先不带条件跑一次还能拿到每列的类型、空值、去重数与高频值（表结构画像）。跨文件 join、透视表、统计建模这类插件覆盖不了的，再照常写脚本。
 
 **转 PDF 报错？** `.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word，纯 JS 不提供 PDF 渲染；写出 `.doc` / `.odt` 同理。各格式保真度见[平台支持](docs/platform.md)。
 
@@ -167,6 +171,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.25** | 新增 `office_query`：在表格文件内筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行只回结论；不给条件时返回表结构画像。数值与日期按真实写法识别，算不了的需求（跨文件 join、透视、建模）照常写脚本 |
 | **0.3.24** | 安装改用包名 `dsh-office-toolkit`（不再依赖直链），其它方式折叠收起 |
 | **0.3.23** | 发布自动化:推 `v*` tag 由 GitHub Actions 发布 npm 并上传 Release 附件 |
 | **0.3.22** | 文档精简：更新说明只留结论与命令 |

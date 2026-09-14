@@ -56,7 +56,7 @@ function check(name, cond, detail = '') {
   console.log(`${cond ? '✓' : '✗'} ${name}${detail ? ' — ' + detail : ''}`);
 }
 
-check('apply 注册 6 个工具', registered.size === 6, [...registered.keys()].join(', '));
+check('apply 注册 7 个工具', registered.size === 7, [...registered.keys()].join(', '));
 for (const [n, t] of registered) {
   check(`工具 ${n} 结构完整`, t.parameters?.type === 'object' && t.output?.render && typeof t.execute === 'function' && t.timeoutMs > 0);
 }
@@ -117,6 +117,15 @@ check('office_edit_xlsx(含 add_chart)', r4.content.includes('add_chart'), r4.co
 
 const r5 = await registered.get('office_read').execute({ path: xlsx, sheets: ['明细'] }, exec);
 check('office_read(xlsx)', r5.content.includes('键盘') && r5.content.includes('SUM'), r5.content.split('\n')[0]);
+
+const r5q = await registered.get('office_query').execute({ path: xlsx }, exec);
+check('office_query(画像)', r5q.content.includes('表结构画像') && r5q.content.includes('产品'), r5q.content.split('\n')[0]);
+const r5b = await registered.get('office_query').execute({
+  path: xlsx, groupBy: ['产品'], aggregate: [{ col: '数量', fn: 'sum', as: '数量合计' }],
+}, exec);
+check('office_query(分组聚合)', r5b.content.includes('键盘') && r5b.content.includes('数量合计'), r5b.content.split('\n')[0]);
+const r5c = await registered.get('office_query').execute({ path: xlsx, where: [{ col: '数量', op: 'gt', value: 10 }] }, exec);
+check('office_query(筛选)', r5c.content.includes('命中 1 行'), r5c.content.split('\n').find((l) => l.startsWith('###')));
 
 const tplDef = await registered.get('office_write_docx').execute({ path: tpl, markdown: '订单号：{{orderNo}}\n客户：{{customer}}' }, exec);
 const r6 = await registered.get('office_fill_docx_template').execute(

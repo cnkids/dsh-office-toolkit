@@ -245,6 +245,83 @@ await t('excel: 按 range 限定行列窗口', async () => {
   return 'A1:B2 只返回前两行';
 });
 
+// ---------------------------------------------------------------------------
+// office_query:在文件内直接算(大表只回结论,不把行搬进上下文)
+// ---------------------------------------------------------------------------
+/** 造一份 12000 行的订单表,验证"整表计算"这条路径。 */
+async function writeBigXlsx() {
+  const { writeFile } = await import('node:fs/promises');
+  const regions = ['华东', '华南', '华北', '西南'];
+  const rows = [['地区', '产品', '金额', '日期']];
+  for (let i = 0; i < 12000; i++) {
+    rows.push([regions[i % 4], `P${i % 5}`, `${(i % 997) + 0.5}`, `2025/${(i % 12) + 1}/1`]);
+  }
+  const path = join(outDir, 'orders.xlsx');
+  await writeFile(path, await excel.buildWorkbook({ sheets: [{ name: '订单', rows, header: true }, { name: '备注', rows: [['说明'], ['测试']] }] }));
+  return path;
+}
+
+await t('query: 12000 行分组聚合(ExcelJS 路径)', async () => {
+  const path = await writeBigXlsx();
+  const r = await office.opQuery(path, {
+    groupBy: ['地区'],
+    aggregate: [{ col: '金额', fn: 'sum', as: '销售额' }, { col: '金额', fn: 'avg' }, { col: '产品', fn: 'countDistinct', as: '产品数' }],
+    orderBy: [{ col: '销售额', dir: 'desc' }],
+  });
+  for (const key of ['销售额', '产品数', '华东', '西南']) {
+    if (!r.content.includes(key)) throw new Error(`结果缺少 ${key}: ${r.content}`);
+  }
+  if (!r.content.includes('12000 行')) throw new Error('摘要没有报出扫描行数: ' + r.content);
+  if (r.meta.scannedRows !== 12000 || r.meta.matchedRows !== 12000) throw new Error('meta 行数不对: ' + JSON.stringify(r.meta));
+  if (r.content.length > 1200) throw new Error('结果没有收敛,返回了过多内容: ' + r.content.length);
+  // 降序:西南(最大)必须排在华东之前
+  const order = r.content.split('```tsv')[1].split('```')[0].trim().split('\n').slice(1).map((l) => l.split('\t')[0]);
+  if (order[0] !== '西南' || order.length !== 4) throw new Error('排序或分组数不对: ' + order.join(','));
+  return `12000 行 → 4 行结论(${r.content.length} 字符)`;
+});
+
+await t('query: 表头不在第一行 + 条件筛选', async () => {
+  const path = await writeBigXlsx();
+  const r = await office.opQuery(path, {
+    sheet: '订单',
+    headerRow: 1,
+    where: [{ col: '地区', op: 'eq', value: '华东' }, { col: '金额', op: 'gte', value: 500 }],
+    aggregate: [{ col: '金额', fn: 'count', as: '单数' }, { col: '金额', fn: 'max', as: '最大' }],
+  });
+  if (!/命中 \d+ 行/.test(r.content)) throw new Error('摘要没写命中行数: ' + r.content.split('\n')[0]);
+  if (!r.meta.matchedRows || r.meta.matchedRows >= 12000) throw new Error('筛选没生效: ' + r.meta.matchedRows);
+  return `命中 ${r.meta.matchedRows} 行`;
+});
+
+await t('query: 不给汇总条件时返回表结构画像', async () => {
+  const path = await writeBigXlsx();
+  const r = await office.opQuery(path, { sheet: 2 });
+  if (!r.content.includes('表结构画像')) throw new Error('没有进入画像模式: ' + r.content);
+  if (!r.content.includes('备注')) throw new Error('序号选表没生效(应为第 2 张表)');
+  return r.meta.sheet;
+});
+
+await t('query: CSV 走 SheetJS 路径', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const path = join(outDir, 'query.csv');
+  await writeFile(path, '地区,金额\n华东,"1,200.50"\n华南,800\n华东,200\n');
+  const r = await office.opQuery(path, { groupBy: ['地区'], aggregate: [{ col: '金额', fn: 'sum', as: '合计' }], orderBy: [{ col: '合计', dir: 'desc' }] });
+  if (!r.content.includes('华东') || !r.content.includes('1400.5')) throw new Error('CSV 聚合结果不对: ' + r.content);
+  return '华东 1400.5 / 华南 800';
+});
+
+await t('query: 选错工作表 / 算了 Word 文档时报错清晰', async () => {
+  const path = await writeBigXlsx();
+  const sheetErr = await office.opQuery(path, { sheet: '不存在的表' }).catch((e) => e);
+  if (sheetErr.code !== 'UNKNOWN_SHEET' || !sheetErr.message.includes('订单')) throw new Error('选表报错不对: ' + sheetErr.message);
+  const { writeFile } = await import('node:fs/promises');
+  const docPath = join(outDir, 'query-not-table.docx');
+  await writeFile(docPath, await word.writeDocx({ markdown: '# 不是表格' }, {}));
+  const wordErr = await office.opQuery(docPath, {}).catch((e) => e);
+  if (!/只能算表格/.test(wordErr.message) || !/office_read/.test(wordErr.message)) throw new Error('算 Word 的报错不对: ' + wordErr.message);
+  return sheetErr.message.slice(0, 40);
+});
+
 await t('legacy: .xls 导出/读取(SheetJS biff8)', async () => {
   const XLSX = await import('@e965/xlsx');
   const ws = XLSX.utils.aoa_to_sheet([['名称', '数值'], ['项目A', 100], ['项目B', 200]]);
