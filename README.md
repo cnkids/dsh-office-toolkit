@@ -43,7 +43,7 @@
 
 | 工具 | 作用 |
 | --- | --- |
-| `office_read` | 读取 `.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv`（Excel 以 TSV 返回；`.docx` 可选返回排版格式报告） |
+| `office_read` | 读取 `.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv`（Excel 以 TSV 返回；Word 长文可 `offset` 分段续读、`outline` 取标题大纲；`.docx` 可选返回排版格式报告） |
 | `office_query` | 在表格文件内计算：条件筛选、分组、求和/均值/计数/去重、排序、表结构画像 —— 只返回结论 |
 | `office_write_docx` | 新建文档（html / markdown / text） |
 | `office_write_xlsx` | 新建工作簿（多表、表头、公式、日期、样式） |
@@ -152,6 +152,8 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **几万行的表怎么统计？** 用 `office_query`，它在文件内算完只回结论，不需要把整张表读进上下文。例如按地区求和、按金额倒序取前 20、只看某段时间的数据，都是一次调用；先不带条件跑一次还能拿到每列的类型、空值、去重数与高频值（表结构画像）。跨文件 join、透视表、统计建模这类插件覆盖不了的，再照常写脚本。
 
+**几百页的 Word 怎么读？** 一次 `office_read` 只返回 `maxChars`（默认 90000 字符）那么长，返回里会写明总字符数和「继续读」该传的 `offset`，下一次带上它就从断点接着读，不必从头重来；也可以先传 `outline: true` 拿标题大纲（级别 / 字符偏移 / 标题），直接跳到某一章。
+
 **转 PDF 报错？** `.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word，纯 JS 不提供 PDF 渲染；写出 `.doc` / `.odt` 同理。各格式保真度见[平台支持](docs/platform.md)。
 
 **智能体还是用了通用 `read`？** 见上一节，补一条用户级指令即可稳定命中。
@@ -171,6 +173,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.27** | Word 长文档可分段读：`offset` 续读（不再每次从头开始）+ `outline` 标题大纲跳读；逐段拼回与全文逐字节一致 |
 | **0.3.26** | 修 `office_fill_docx_template` 描述里的字面量占位符导致 DSH 提示词组装报 `malformed prompt variable reference`：面向模型的文本一律不再出现双花括号变量写法，并加测试门禁 |
 | **0.3.25** | 新增 `office_query`：在表格文件内筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行只回结论；不给条件时返回表结构画像。数值与日期按真实写法识别，算不了的需求（跨文件 join、透视、建模）照常写脚本 |
 | **0.3.24** | 安装改用包名 `dsh-office-toolkit`（不再依赖直链），其它方式折叠收起 |

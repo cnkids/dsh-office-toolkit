@@ -13,6 +13,7 @@ import { htmlToDocxBuffer } from '../lib/core/docx-writer.js';
 import { resolveMainPart } from '../lib/core/word.js';
 import { extractDocxFormat, formatReport } from '../lib/core/docx-format.js';
 import { CAPS, assertOfficeBinary } from '../lib/core/util.js';
+import { pageOf, outlineOf } from '../lib/core/office.js';
 import { CORE_DEPS, depFailure, lazyModule, missingDeps } from '../lib/core/deps.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -215,6 +216,149 @@ await t('excel: add_chart 经 editWorkbook 落盘', async () => {
   const { chartParts } = await import('../lib/core/charts.js');
   if (!chartParts(out).length) throw new Error('未注入图表部件');
   return 'editWorkbook 图表注入成功';
+});
+
+// ---------------------------------------------------------------------------
+// Word 分段阅读:offset 续读 + 标题大纲
+// ---------------------------------------------------------------------------
+/** 造一份带标题的长文档,并返回路径。 */
+async function writeLongDocx() {
+  const { writeFile } = await import('node:fs/promises');
+  const parts = ['# 项目总结报告'];
+  for (let c = 1; c <= 12; c++) {
+    parts.push('', `## 第 ${c} 章 主题 ${c}`);
+    for (let i = 0; i < 120; i++) parts.push(`第 ${c}-${i + 1} 段：用于分页测试的正文内容，含中文字符与编号 ${i % 89}，把文档撑到足够大。`);
+  }
+  const path = join(outDir, 'long.docx');
+  await writeFile(path, await word.writeDocx({ markdown: parts.join('\n') }, { title: '报告' }));
+  return path;
+}
+
+/** 从 opRead 结果里取出正文(去掉前面的摘要行)。 */
+const pageBody = (content) => content.split('\n\n').slice(1).join('\n\n');
+
+await t('word 分段: 首段给出总长与「继续读」的 offset', async () => {
+  const path = await writeLongDocx();
+  const r = await office.opRead(path, { maxChars: 5000 });
+  if (!/第 0–\d+ 字符 \/ 共 \d+ 字符/.test(r.content)) throw new Error('摘要没写本次区间与总长: ' + r.content.split('\n').slice(0, 5).join(' | '));
+  if (!r.content.includes(`offset: ${r.meta.end}`)) throw new Error('没有给出下次该传的 offset');
+  if (r.meta.truncated !== true || r.meta.totalChars <= r.meta.end) throw new Error('meta 不对: ' + JSON.stringify(r.meta));
+  return `共 ${r.meta.totalChars} 字符，本段 [0, ${r.meta.end})`;
+});
+
+await t('word 分段: 逐段拼回来与一次读完逐字节相同(不重不漏)', async () => {
+  const path = await writeLongDocx();
+  const full = pageBody((await office.opRead(path, { maxChars: 10_000_000 })).content);
+  let offset = 0;
+  let joined = '';
+  for (let i = 0; i < 200; i++) {
+    const r = await office.opRead(path, { offset, maxChars: 3000 });
+    joined += pageBody(r.content);
+    if (!r.meta.truncated) break;
+    offset = r.meta.end;
+  }
+  if (joined !== full) {
+    const at = [...full].findIndex((ch, i) => ch !== joined[i]);
+    throw new Error(`拼接结果与全文不一致(首个差异 @${at})：${JSON.stringify(joined.slice(at - 20, at + 20))} vs ${JSON.stringify(full.slice(at - 20, at + 20))}`);
+  }
+  return `${full.length} 字符逐字节一致`;
+});
+
+await t('word 分段: 分段边界落在句末/换行,不切半句话', async () => {
+  const path = await writeLongDocx();
+  const r = await office.opRead(path, { maxChars: 3000 });
+  const body = pageBody(r.content);
+  if (!/[。！？；\n]$/.test(body)) throw new Error('本段没有收在句子/段落边界: ' + JSON.stringify(body.slice(-30)));
+  if (!body.includes('第 1-1 段')) throw new Error('首段内容不对');
+  // 边界字符归本段,下一段紧接着往下(拼接无损由下一条测试保证)
+  const nxt = pageBody((await office.opRead(path, { offset: r.meta.end, maxChars: 3000 })).content);
+  if (body + nxt !== pageBody((await office.opRead(path, { maxChars: 10_000_000 })).content).slice(0, body.length + nxt.length)) {
+    throw new Error('两段衔接处与全文不一致');
+  }
+  return `本段 ${body.length} 字符，收尾 ${JSON.stringify(body.slice(-1))}`;
+});
+
+await t('word 分段: pageOf 的边界与不重不漏(纯函数)', async () => {
+  const text = '第一句。第二句！第三句？' + 'x'.repeat(60) + '。末尾';
+  const first = pageOf(text, 0, 20);
+  if (first.end !== text.indexOf('？') + 1 || first.more !== true) throw new Error('没有收在句末标点上: ' + JSON.stringify(first));
+  if (first.slice !== text.slice(0, first.end)) throw new Error('切片与 end 不匹配');
+  // 窗口里没有任何边界字符时硬切,不会为了凑边界只返回一点点
+  const dense = 'y'.repeat(100);
+  const hard = pageOf(dense, 0, 20);
+  if (hard.end !== 20 || hard.slice.length !== 20) throw new Error('无边界时没有硬切: ' + JSON.stringify(hard));
+  // 逐段拼回来等于原文
+  let offset = 0;
+  let joined = '';
+  for (let i = 0; i < 100; i++) {
+    const page = pageOf(text, offset, 7);
+    joined += page.slice;
+    if (!page.more) break;
+    offset = page.end;
+  }
+  if (joined !== text) throw new Error('分页拼接与原文不一致: ' + JSON.stringify(joined));
+  if (pageOf(text, text.length, 10).more !== false) throw new Error('读到末尾还标记 more');
+  return `${text.length} 字符按 7 字符分页拼接无损`;
+});
+
+await t('word 分段: outlineOf 只认真标题(围栏/无空格/超 6 级都排除)', async () => {
+  const md = ['# A', '', '正文', '', '```sh', '# 代码里的注释', '```', '', '### C ###', '####### 七个井号', '#没有空格', '###### 六级'].join('\n');
+  const items = outlineOf(md);
+  const titles = items.map((h) => `${h.level}:${h.title}`);
+  if (titles.join(' | ') !== '1:A | 3:C ### | 6:六级') throw new Error('标题识别不对: ' + titles.join(' | '));
+  if (items[1].offset !== md.indexOf('### C')) throw new Error('偏移不对: ' + items[1].offset);
+  if (outlineOf('没有标题的正文').length !== 0) throw new Error('无标题正文不该有结果');
+  return titles.join(' | ');
+});
+
+await t('word 分段: 标题大纲带级别/偏移/标题,可据此跳读', async () => {
+  const path = await writeLongDocx();
+  const r = await office.opRead(path, { outline: true });
+  if (!r.content.includes('标题大纲: 13 条')) throw new Error('标题条数不对: ' + r.content.split('\n').slice(0, 5).join(' | '));
+  const rows = r.content.split('```tsv')[1].split('```')[0].trim().split('\n').slice(1).map((l) => l.split('\t'));
+  if (rows.length !== 13) throw new Error('大纲行数不对: ' + rows.length);
+  if (rows[0][0] !== '1' || rows[0][1] !== '0' || rows[0][2] !== '项目总结报告') throw new Error('一级标题行不对: ' + rows[0].join(','));
+  const ch5 = rows.find((x) => x[2] === '第 5 章 主题 5');
+  if (!ch5) throw new Error('缺少第 5 章');
+  // 用大纲里的偏移直接跳读,应该正好从该章标题开始
+  const jump = pageBody((await office.opRead(path, { offset: Number(ch5[1]), maxChars: 2000 })).content);
+  if (!jump.includes('第 5 章 主题 5')) throw new Error('按大纲偏移跳读没落在该章: ' + jump.slice(0, 60));
+  if (jump.includes('第 4 章')) throw new Error('跳读越到了上一章');
+  return `${rows.length} 条标题，第 5 章 @${ch5[1]}`;
+});
+
+await t('word 分段: offset 越界 / 非法值 / html 组合都有清晰报错', async () => {
+  const msgOf = async (fn) => { try { await fn(); return ''; } catch (err) { return err.message; } };
+  const path = await writeLongDocx();
+  const beyond = await office.opRead(path, { offset: 9_999_999 });
+  if (!beyond.content.includes('已到文档末尾') || beyond.meta.ended !== true) throw new Error('越界提示不对: ' + beyond.content.split('\n').at(-1));
+  const bad = await msgOf(() => office.opRead(path, { offset: -5 }));
+  if (!/offset 需为/.test(bad)) throw new Error('非法 offset 报错不清晰: ' + bad);
+  const badType = await msgOf(() => office.opRead(path, { offset: 1.5 }));
+  if (!/offset 需为/.test(badType)) throw new Error('小数 offset 没被拦: ' + badType);
+  const htmlErr = await msgOf(() => office.opRead(path, { format: 'html', offset: 10 }));
+  if (!/html.*不支持 offset/.test(htmlErr)) throw new Error('html+offset 报错不清晰: ' + htmlErr);
+  const htmlOutline = await msgOf(() => office.opRead(path, { format: 'html', outline: true }));
+  if (!/不支持 offset \/ outline/.test(htmlOutline)) throw new Error('html+outline 报错不清晰: ' + htmlOutline);
+  return '越界/负数/小数/html 组合 5 种情况';
+});
+
+await t('word 分段: html 模式不分页但说明该切 text 模式', async () => {
+  const path = await writeLongDocx();
+  const r = await office.opRead(path, { format: 'html', maxChars: 400 });
+  if (!/不分页；要分段读长文请用默认 text 模式/.test(r.content)) throw new Error('html 模式没给分页指引: ' + r.content.split('\n').slice(0, 5).join(' | '));
+  if (typeof r.html !== 'string' || !r.html.includes('<h1>')) throw new Error('html 输出丢失');
+  return `${r.html.length} 字符 html（未分页）`;
+});
+
+await t('word 分段: 格式报告只在第一段给出,不重复占位', async () => {
+  const path = await writeLongDocx();
+  const first = await office.opRead(path, { withFormatting: true, maxChars: 4000 });
+  if (!first.content.includes('## 格式报告（整篇）')) throw new Error('第一段没有格式报告');
+  const second = await office.opRead(path, { withFormatting: true, offset: first.meta.end, maxChars: 4000 });
+  if (second.content.includes('## 格式报告')) throw new Error('后续段重复给了格式报告');
+  if (!second.content.includes('格式报告只在 offset=0 时给出')) throw new Error('后续段没有说明格式报告去哪了');
+  return '首段带报告,续读只给提示';
 });
 
 await t('excel: 读取工作簿内容', async () => {

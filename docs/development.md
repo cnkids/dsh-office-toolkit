@@ -5,11 +5,11 @@
 ## 本地开发
 
 ```sh
-npm test           # 四个测试脚本：核心库 65 · 跨平台层 16 · 计算层 39 · 插件适配层 50，共 170 项
+npm test           # 四个测试脚本：核心库 74 · 跨平台层 16 · 计算层 39 · 插件适配层 52，共 181 项
 npm run coverage   # 同上并统计覆盖率，写出 coverage/lcov.info
 ```
 
-纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 94.3% / 分支 76.7% / 函数 95.5%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
+纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 94.3% / 分支 77.4% / 函数 95.6%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
 
 改工具描述时注意：**面向模型的文本里不能出现 `{{变量}}` 字面量**（原因见[设计说明](design.md)）。`test/plugin-smoke.mjs` 会递归扫描全部工具 schema 拦住它。
 

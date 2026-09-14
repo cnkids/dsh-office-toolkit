@@ -25,6 +25,21 @@ Word 正文默认以 Markdown 风格文本返回；Excel 以 TSV 代码块返回
 
 **只看内容**用 `office_read`；**要算**（求和 / 分组 / 筛选 / 去重 / 排序）用 [`office_query`](#计算office_query) —— 后者不会把整张表读进上下文。
 
+**长 Word 文档分段读**（不会每次都从头开始）：
+
+```json
+{ "path": "标书.docx", "maxChars": 20000 }
+{ "path": "标书.docx", "offset": 20000, "maxChars": 20000 }
+{ "path": "标书.docx", "outline": true }
+```
+
+- `maxChars` 是**每段**的字符上限（默认 90000）。返回里会写明总字符数、本次区间，以及还有下一页时「继续读」该传的 `offset`。
+- 分页边界尽量收在句末或换行处，不会把半句话、半张表格切开；**逐段拼回来与一次读完逐字节相同**，不重不漏。
+- `offset` 超出总长会直接告知「已到文档末尾」，不是报错。
+- `outline: true` 只返回标题大纲（TSV：级别 / 字符偏移 / 标题），可据此传 `offset` 直接跳到某一章。大纲按 Markdown 标题（`#` 开头）提取，围栏代码块里的 `#` 会跳过。
+- `format: "html"` 下不支持 `offset` / `outline`（按字符切会切坏标签）；html 输出仍按 `maxChars` 截断，并提示想分段就切回 text 模式。
+- `withFormatting` 的格式报告只在 `offset=0` 那一段给出，后续段只留一行提示，避免每页重复。
+
 ```json
 { "path": "报告.docx" }
 { "path": "报告.docx", "format": "html" }
@@ -137,7 +152,7 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 - **路径**：绝对路径，或相对会话工作区的路径；写入默认只允许会话工作区与系统临时目录，越界返回 `FS_SANDBOX_DENIED`。
 - **单元格值**：数字 / 布尔原样；`=` 开头视为公式；`date:2026-09-09` 写入日期；`num:1,234.5` 强制数字。
 - **样式**：`{bold, italic, fontSize, color, fill, align, valign, wrap, numFmt, border}`（颜色为 `RRGGBB`）。
-- **截断**：大表默认 400 行 × 60 列、Word 正文默认 90000 字符，超出会截断并提示用参数分段读（要全表统计请改用 `office_query`）。`office_query` 扫描上限 20 万行 × 200 列，超出会明确告知只统计了前 N 行。
+- **截断**：大表默认 400 行 × 60 列（分段用 `range` / `maxRows`，要全表统计用 `office_query`）；Word 正文默认每段 90000 字符，用 `offset` 接着读。`office_query` 扫描上限 20 万行 × 200 列，超出会明确告知只统计了前 N 行。
 - **结果规模**：`office_query` 的结果默认最多 200 行、6 位有效小数内取整；`limit` 上限 2000。
 - **输入体积**：`.docx` 40 MB、`.xlsx` 60 MB；三者都是 zip，解压后总量超过 **1 GiB** 或压缩比超过 **150:1** 会按「疑似压缩炸弹」拒绝（`ZIP_BOMB_SUSPECTED`）。
 
@@ -207,7 +222,9 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 | `range` | string | — | 仅 Excel：读取范围，如 A1:F50 |
 | `maxRows` | integer | — | 仅 Excel：最多读取行数，默认 400 |
 | `maxCols` | integer | — | 仅 Excel：最多读取列数，默认 60 |
-| `maxChars` | integer | — | Word 正文返回字符上限，默认 90000 |
+| `maxChars` | integer | — | Word 正文每段返回的字符上限（分页大小），默认 90000 |
+| `offset` | integer | — | 仅 Word：从正文第几个字符开始返回，默认 0。返回里会给出总字符数与下次该传的 offset，用于分段读长文档；offset 超出总长会明确提示已到末尾 |
+| `outline` | boolean | — | 仅 Word 的 text 模式：只返回标题大纲（TSV：级别 / 字符偏移 / 标题），可据此传 offset 直接跳到某一章；与 format: "html" 不能同时用 |
 | `format` | enum: `text` / `html` | — | Word 输出格式：text=Markdown 风格（默认），html=原始 HTML |
 | `withFormatting` | boolean | — | 仅 .docx：额外返回格式报告 —— 每段的字体(中文/西文)、字号、行距(固定值/倍数)、首行缩进、对齐、样式名，以及页面尺寸与页边距；并给出格式分布(主流值)与偏离主流的段落。用于比对行文规则(如"正文三号仿宋、行距固定值 28.8 磅")。结构化数据在 meta.formatting。 |
 

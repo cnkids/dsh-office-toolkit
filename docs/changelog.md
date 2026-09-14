@@ -4,6 +4,7 @@
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.27** | Word 长文档支持分段阅读:新增 `offset`(字符偏移续读)与 `outline`(标题大纲,含级别/偏移/标题);分页边界收在句末或换行处,切片与下一段严格衔接(逐段拼回等于全文);offset 越界、非法值、与 `format: "html"` 组合都有明确报错;html 输出不分页但给出切回 text 模式的指引 |
 | **0.3.26** | 修 `office_fill_docx_template` 的工具描述/参数说明含 `{{变量}}` 字面量 —— PTC 模式下工具声明会被嵌进 `tools:sdk` 提示词段落并参与变量插值,DSH 直接抛 `malformed prompt variable reference` 导致整个 prompt 组装失败。改为文字描述「两个半角花括号 + 变量名」,结果提示与错误信息同步清理,`test/plugin-smoke.mjs` 递归扫描全部工具 schema 做门禁 |
 | **0.3.25** | 新增 `office_query`：表格内直接算(筛选/分组/sum·avg·min·max·count·countDistinct/排序)，全表扫描但只返回结论，不给条件则输出表结构画像；数值识别 `1,234.00`/`¥88`/`12.5%`，日期归一化后比较；类型不可比时判为不可比而非退回字典序。数值识别的正则改为无重叠量词(修掉一处可被超长数字串触发的 O(n²) 回溯)。`office_read` 的截断提示改为指向本工具 |
 | **0.3.24** | 安装/更新改用裸包名 `dsh-office-toolkit`;GitHub 直链、离线包、本地源码收进折叠块;发布流程改为 Trusted Publisher 免 token |

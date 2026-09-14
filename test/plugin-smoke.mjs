@@ -111,6 +111,13 @@ check('office_write_docx', r1.content.includes('已生成 Word 文档'), r1.cont
 const r2 = await registered.get('office_read').execute({ path: docx }, exec);
 check('office_read(docx)', r2.content.includes('冒烟测试') && r2.content.includes('| A'), r2.content.split('\n')[0]);
 
+const r2p = await registered.get('office_read').execute({ path: docx, maxChars: 24 }, exec);
+check('office_read 分段阅读: 给总长 + 下次的 offset',
+  /共 \d+ 字符/.test(r2p.content) && /继续读: 再调用本工具并传 offset: \d+/.test(r2p.content),
+  r2p.content.split('\n').slice(3, 5).join(' | '));
+const r2o = await registered.get('office_read').execute({ path: docx, outline: true }, exec);
+check('office_read 标题大纲', r2o.content.includes('标题大纲') && r2o.content.includes('冒烟测试'), r2o.content.split('\n')[3]);
+
 const r3 = await registered.get('office_write_xlsx').execute({
   path: xlsx,
   sheets: [
