@@ -70,6 +70,22 @@ for (const [n, t] of registered) {
   const required = t.parameters.required || [];
   check(`工具 ${n} required 已声明`, required.every((k) => k in props), JSON.stringify(required));
 }
+
+// PTC 模式下工具描述会被嵌进 tools:sdk 提示词段落,再由 DSH 做 {{变量}} 插值 ——
+// 描述里出现 `{{变量}}` 这种字面量会被当成变量引用,直接让整个 prompt 组装抛错
+// (malformed prompt variable reference)。所以面向模型的文本里一律不能有 {{...}}。
+const VARIABLE_LITERAL = /\{\{[^{}]*\}\}/;
+function collectText(value, out = []) {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const item of value) collectText(item, out);
+  else if (value && typeof value === 'object') for (const item of Object.values(value)) collectText(item, out);
+  return out;
+}
+for (const [n, t] of registered) {
+  const texts = [...collectText(t.description), ...collectText(t.parameters)];
+  const bad = texts.filter((s) => VARIABLE_LITERAL.test(s));
+  check(`工具 ${n} 描述不含 {{}} 变量字面量`, bad.length === 0, bad.join(' | ').slice(0, 70));
+}
 const xlsxSheets = registered.get('office_write_xlsx').parameters.properties.sheets;
 check('office_write_xlsx.sheets 为数组 schema',
   xlsxSheets?.type === 'array' && xlsxSheets?.items?.type === 'object',
@@ -132,6 +148,7 @@ const r6 = await registered.get('office_fill_docx_template').execute(
   { templatePath: tpl, outputPath: filled, data: { orderNo: 'SO-2026-88', customer: '测试客户' } }, exec);
 const r6b = await registered.get('office_read').execute({ path: filled }, exec);
 check('office_fill_docx_template', r6.content.includes('已按模板生成') && r6b.content.includes('SO-2026-88'), r6.content.split('\n')[0]);
+check('模板填充的结果文本不含 {{}} 字面量', !VARIABLE_LITERAL.test(r6.content), r6.content.split('\n').at(-1)?.slice(0, 70));
 
 if (canWriteDoc) {
   const r7 = await registered.get('office_convert').execute({ sourcePath: docx, outputPath: conv }, exec);

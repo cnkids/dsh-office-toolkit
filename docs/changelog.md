@@ -4,6 +4,7 @@
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.26** | 修 `office_fill_docx_template` 的工具描述/参数说明含 `{{变量}}` 字面量 —— PTC 模式下工具声明会被嵌进 `tools:sdk` 提示词段落并参与变量插值,DSH 直接抛 `malformed prompt variable reference` 导致整个 prompt 组装失败。改为文字描述「两个半角花括号 + 变量名」,结果提示与错误信息同步清理,`test/plugin-smoke.mjs` 递归扫描全部工具 schema 做门禁 |
 | **0.3.25** | 新增 `office_query`：表格内直接算(筛选/分组/sum·avg·min·max·count·countDistinct/排序)，全表扫描但只返回结论，不给条件则输出表结构画像；数值识别 `1,234.00`/`¥88`/`12.5%`，日期归一化后比较；类型不可比时判为不可比而非退回字典序。数值识别的正则改为无重叠量词(修掉一处可被超长数字串触发的 O(n²) 回溯)。`office_read` 的截断提示改为指向本工具 |
 | **0.3.24** | 安装/更新改用裸包名 `dsh-office-toolkit`;GitHub 直链、离线包、本地源码收进折叠块;发布流程改为 Trusted Publisher 免 token |
 | **0.3.23** | 加 GitHub Actions:推 `v*` tag 自动校验版本、跑测试、发布 npm(Trusted Publishing,无需 token)并上传 Release 附件 |
