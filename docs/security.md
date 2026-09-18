@@ -11,7 +11,7 @@
 | 临时文件全局可读 | 旧格式转换的 `0644` 临时文件同机可读 | 显式 `0600` |
 | 正则回溯（ReDoS） | 构造输入可让宿主长时间卡住 | 所有标签 / 引用解析改为线性扫描（0.3.0）；`office_query` 的数值/日期识别同样只用无重叠量词的正则，并有「6 万位畸形数字串必须 200ms 内失败」的回归测试（0.3.25） |
 | 解压炸弹 | 只限制压缩包体积，几十 KB 的 zip 可解压出几十 GB | 解压总量 > 1 GiB 或压缩比 > 150:1 直接拒绝（0.3.12） |
-| 图片探测 DoS / 外链抓取 | `html-to-docx` 用 `image-size` 量图片尺寸，而它有 2 个 high DoS（ICNS / JXL / HEIF）且**无修复版**；其维护 fork 改用 `probe-image-size` → `needle`，会按 `<img src>` 真发 HTTP 请求 | 0.3.13 起 `.docx` 由自研生成器产出（`docx@9`），不解析图片、只保留 `alt`，图片与网络两条路径都不存在 |
+| 图片探测 DoS / 外链抓取 | `html-to-docx` 用 `image-size` 量图片尺寸，而它有 2 个 high DoS（ICNS / JXL / HEIF）且**无修复版**；其维护 fork 改用 `probe-image-size` → `needle`，会按 `<img src>` 真发 HTTP 请求 | 0.3.13 起 `.docx` 由自研生成器产出（`docx@9`）；0.3.28 起图片嵌入也自己做：只读本地文件与 `data:` URL，按魔数识别格式并取尺寸（`lib/core/image.js`），单张 ≤ 8 MB，`http/https` 一律拒绝（`IMAGE_REMOTE`），全程不发网络请求 |
 | `xlsx` 已知漏洞 | Prototype Pollution + ReDoS | 0.3.6 起换 `@e965/xlsx@0.20.3` |
 | 依赖链 4 条 `npm audit` 告警 | `uuid`、`image-size` 上游均不可修 | 换 `@wekanteam/exceljs` + 自研 docx 生成，`npm audit` 归零；整棵依赖树无安装脚本（0.3.12 / 0.3.13） |
 | 危险链接 | `javascript:` / `data:` / `vbscript:` / `file:` 链接可被写进文档与关系文件 | 写入 `.docx` 时降级为纯文本（0.3.13） |

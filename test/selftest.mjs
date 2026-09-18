@@ -1,7 +1,7 @@
 // Standalone selftest for the office core (no DSH needed).
 // Usage: node test/selftest.mjs   (outputs into test/out/)
 import { mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as office from '../lib/core/office.js';
 import * as word from '../lib/core/word.js';
@@ -15,6 +15,15 @@ import { extractDocxFormat, formatReport } from '../lib/core/docx-format.js';
 import { CAPS, assertOfficeBinary } from '../lib/core/util.js';
 import { pageOf, outlineOf } from '../lib/core/office.js';
 import { CORE_DEPS, depFailure, lazyModule, missingDeps } from '../lib/core/deps.js';
+import { editDocx, scanParagraphs } from '../lib/core/docx-edit.js';
+import { openOoxml } from '../lib/core/ooxml.js';
+import { normalizeStyleSpec, normalizeTableSpec, autoColumnPercents, lengthToTwips, runStyleFromCss, paragraphStyleFromCss, declarationsFrom } from '../lib/core/docx-style.js';
+import { scanTables } from '../lib/core/docx-table.js';
+import { headingStyleIds, levelTextAt, NUMBERING_PRESETS } from '../lib/core/docx-numbering.js';
+import { formatCounter } from '../lib/core/docx-numbering-read.js';
+import { fitImageSize, loadImage, probeImage } from '../lib/core/image.js';
+import { writeFileSync, readFileSync } from 'node:fs';
+import { deflateSync } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, 'out');
@@ -237,6 +246,67 @@ async function writeLongDocx() {
 /** 从 opRead 结果里取出正文(去掉前面的摘要行)。 */
 const pageBody = (content) => content.split('\n\n').slice(1).join('\n\n');
 
+await t('页眉页脚: 文字 / 页码域 / 每节引用 / updateFields', async () => {
+  const buf = await word.writeDocx({ markdown: '# 通知\n\n正文一段。' }, {
+    title: '通知',
+    header: { text: 'XX单位文件', align: 'center', fontSizePt: 14, bold: true },
+    footer: { text: '— ', pageNumber: '{page} — 共 {total} 页', align: 'center' },
+  });
+  const { zip } = await openOoxml(buf, 'docx');
+  const doc = zip.file('word/document.xml').asText();
+  const header = zip.file('word/header1.xml')?.asText() ?? '';
+  const footer = zip.file('word/footer1.xml')?.asText() ?? '';
+  const settings = zip.file('word/settings.xml')?.asText() ?? '';
+  const markers = [
+    ['生成了页眉部件', header.includes('XX单位文件')],
+    ['页眉居中', header.includes('w:jc w:val="center"')],
+    ['页眉加粗与字号', /<w:b\/>/.test(header) && /w:sz w:val="28"/.test(header)],
+    ['页脚有 PAGE 域', /PAGE/.test(footer)],
+    ['页脚有 NUMPAGES 域', /NUMPAGES/.test(footer)],
+    ['页脚文字与页码拼接', footer.includes('—') && footer.includes('共')],
+    ['小节引用页眉页脚', /headerReference/.test(doc) && /footerReference/.test(doc)],
+    ['打开时更新域', /updateFields/.test(settings)],
+    ['正文可读回', (await word.readDocx(buf, {})).content.includes('正文一段')],
+  ];
+  const bad = markers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  return `${markers.length} 项（含 PAGE/NUMPAGES 域）`;
+});
+
+await t('目录: 插入 TOC 域并指定收录级别', async () => {
+  const buf = await word.writeDocx({ markdown: '# 一、总体\n\n正文\n\n## （一）细节\n\n正文\n\n### 三级\n\n正文' }, {
+    title: '报告', toc: { title: '目　录', levels: 2 },
+  });
+  const doc = await partText(buf, 'document.xml');
+  const markers = [
+    ['有 TOC 指令域', /instrText[^<]*TOC/.test(doc)],
+    ['目录标题写入', doc.includes('目　录')],
+    ['收录 1-2 级', /1-2/.test(doc)],
+    ['一次性不带目录时没有 TOC', !/instrText[^<]*TOC/.test(await partText(await word.writeDocx({ markdown: '# A' }, { title: 't' }), 'document.xml'))],
+    ['正文可读回', (await word.readDocx(buf, {})).content.includes('三级')],
+  ];
+  const bad = markers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  return 'TOC 域 + 级别范围 + 标题';
+});
+
+await t('页眉页脚/目录: 参数错误清晰', async () => {
+  const cases = [
+    { spec: { header: {} }, want: '至少要给 text 或 pageNumber' },
+    { spec: { footer: { pageNumber: '第 X 页' } }, want: '要用 {page}' },
+    { spec: { header: { fontSizePt: 999 } }, want: '需为 0–200 的磅值' },
+    { spec: { toc: { levels: 12 } }, want: 'toc.levels 需为 1–9' },
+    { spec: { header: '页眉' }, want: 'header 需为对象' },
+  ];
+  for (const { spec, want } of cases) {
+    let msg = '';
+    try { await word.writeDocx({ markdown: 'x' }, { title: 't', ...spec }); } catch (e) { msg = `${e.code}|${e.message}`; }
+    if (!msg.includes(want)) throw new Error(`${JSON.stringify(spec)} 的报错不对: ${msg}`);
+    if (!msg.startsWith('INVALID_ARGS')) throw new Error(`${JSON.stringify(spec)} 应报 INVALID_ARGS: ${msg}`);
+  }
+  return `${cases.length} 种参数错误都带 INVALID_ARGS`;
+});
+
 await t('word 分段: 首段给出总长与「继续读」的 offset', async () => {
   const path = await writeLongDocx();
   const r = await office.opRead(path, { maxChars: 5000 });
@@ -359,6 +429,1325 @@ await t('word 分段: 格式报告只在第一段给出,不重复占位', async 
   if (second.content.includes('## 格式报告')) throw new Error('后续段重复给了格式报告');
   if (!second.content.includes('格式报告只在 offset=0 时给出')) throw new Error('后续段没有说明格式报告去哪了');
   return '首段带报告,续读只给提示';
+});
+
+// ---------------------------------------------------------------------------
+// 排版:字体 / 行距 / 首行缩进(单位换算 + 文档级样式 + 内联 CSS + 改已有文档)
+// ---------------------------------------------------------------------------
+/** 取出 docx 里的某个部件文本。 */
+async function partText(buf, name) {
+  const { zip } = await openOoxml(buf, 'docx');
+  const entry = zip.file(name) || zip.file(`word/${name}`);
+  return entry ? entry.asText() : '';
+}
+
+await t('排版: 单位换算与规格规范化(公文体例)', async () => {
+  const norm = normalizeStyleSpec({ font: '仿宋_GB2312', sizePt: 16, lineSpacingPt: 28.8, firstLineIndentChars: 2, align: 'both', spacingBeforePt: 0, spacingAfterPt: 0 });
+  if (norm.sizeHalfPt !== 32) throw new Error('三号应换算成 32 半磅: ' + norm.sizeHalfPt);
+  if (norm.line !== 576 || norm.lineRule !== 'exact') throw new Error('28.8 磅固定行距应为 576 twip/exact: ' + JSON.stringify(norm));
+  if (norm.firstLineTwips !== 640) throw new Error('三号 2 字符缩进应为 640 twip: ' + norm.firstLineTwips);
+  if (norm.font !== '仿宋_GB2312' || norm.align !== 'both') throw new Error('字体/对齐不对: ' + JSON.stringify(norm));
+  const multiple = normalizeStyleSpec({ lineSpacingMultiple: 1.5 });
+  if (multiple.line !== 360 || multiple.lineRule !== 'auto') throw new Error('1.5 倍行距应为 360/auto: ' + JSON.stringify(multiple));
+  if (lengthToTwips('32px', null) !== 480) throw new Error('32px 应按 96dpi 换算成 480');
+  if (lengthToTwips('2em', 32) !== 640) throw new Error('2em(三号) 应为 640');
+  const heads = normalizeStyleSpec({ font: '仿宋', headings: { font: '黑体', sizePt: 16 } });
+  if (heads.headings.font !== '黑体') throw new Error('headings 没被解析');
+  const noHeads = await (async () => { try { normalizeStyleSpec({ headings: { font: 'x' } }, { allowHeadings: false }); return ''; } catch (e) { return e.code; } })();
+  if (noHeads !== 'INVALID_ARGS') throw new Error('set_style 不该接受 headings: ' + noHeads);
+  return `三号 32 半磅 / 行距 576 / 缩进 640 twip`;
+});
+
+await t('排版: 规格非法时报错清晰', async () => {
+  const cases = [
+    { spec: { sizePt: 'x' }, want: 'sizePt 需为' },
+    { spec: { align: '居中' }, want: 'align 可为' },
+    { spec: { lineSpacingPt: 28, lineSpacingMultiple: 1.5 }, want: '只能给一个' },
+    { spec: { color: 'red' }, want: 'color 需为 RRGGBB' },
+    { spec: { font: '' }, want: 'font 不能为空' },
+  ];
+  for (const { spec, want } of cases) {
+    let msg = '';
+    try { normalizeStyleSpec(spec); } catch (e) { msg = e.message; }
+    if (!msg.includes(want)) throw new Error(`${JSON.stringify(spec)} 的报错不对: ${msg}`);
+  }
+  // 非对象单独测:不要在同一个数组里混类型
+  let typeMsg = '';
+  try { normalizeStyleSpec('楷体'); } catch (e) { typeMsg = e.message; }
+  if (!typeMsg.includes('style 需为对象')) throw new Error('非对象入参的报错不对: ' + typeMsg);
+  return `${cases.length + 1} 种非法规格`;
+});
+
+await t('表格: 单元格内边距 cellMargins', async () => {
+  const spec = normalizeTableSpec({ cellMargins: { left: 108, right: 108, top: 40, bottom: 40 } });
+  if (spec.cellMargins.left !== 108 || spec.cellMargins.bottom !== 40) throw new Error('内边距没解析: ' + JSON.stringify(spec.cellMargins));
+  const partial = normalizeTableSpec({ cellMargins: { left: 200 } }).cellMargins;
+  if (partial.left !== 200 || partial.right !== 108 || partial.top !== 0) throw new Error('没给的边应补 Word 默认值: ' + JSON.stringify(partial));
+
+  const md = '| A | B |\n| --- | --- |\n| 1 | 2 |';
+  const written = await partText(await word.writeDocx({ markdown: md }, { title: 't', style: { table: { cellMargins: { left: 108, right: 108, top: 40, bottom: 40 } } } }), 'document.xml');
+  const edited = await partText((await editDocx(await word.writeDocx({ markdown: md }, { title: 't' }), [
+    { op: 'set_table', table: 1, cellMargins: { left: 108, right: 108, top: 40, bottom: 40 } },
+  ])).buf, 'document.xml');
+  const cellMar = /<w:tblCellMar>.*?<\/w:tblCellMar>/;
+  // 属性顺序不影响语义:两种写法都接受(两个字面量,不动态构造正则)
+  const SIDE_RE = {
+    top: /<w:top [^>]*\/>/,
+    bottom: /<w:bottom [^>]*\/>/,
+    left: /<w:left [^>]*\/>/,
+    right: /<w:right [^>]*\/>/,
+  };
+  const sideValue = (xml, side) => {
+    const hit = xml.match(SIDE_RE[side]);
+    if (!hit) return null;
+    return { value: (hit[0].match(/w:w="(\d+)"/) || [])[1], type: (hit[0].match(/w:type="([a-z]+)"/) || [])[1] };
+  };
+  for (const [label, doc] of [['写文档', written], ['改文档', edited]]) {
+    const hit = doc.match(cellMar);
+    if (!hit) throw new Error(label + ' 没生成 tblCellMar');
+    for (const [side, want] of [['top', '40'], ['bottom', '40'], ['left', '108'], ['right', '108']]) {
+      const got = sideValue(hit[0], side);
+      if (got?.value !== want || got?.type !== 'dxa') throw new Error(`${label} 的 ${side} 应为 ${want}dxa，实际 ${JSON.stringify(got)}`);
+    }
+  }
+  const bad = [
+    { spec: { cellMargins: {} }, want: '至少要给' },
+    { spec: { cellMargins: { left: -1 } }, want: '需为 0–5000' },
+    { spec: { cellMargins: '108' }, want: '需为对象' },
+  ];
+  for (const { spec: badSpec, want: msg } of bad) {
+    let text = '';
+    try { normalizeTableSpec(badSpec); } catch (e) { text = e.message; }
+    if (!text.includes(msg)) throw new Error(JSON.stringify(badSpec) + ' 的报错不对: ' + text);
+  }
+  return '左右 108 / 上下 40 两条路径都落到 tblCellMar';
+});
+
+await t('性能: 万段文档的批量改样式/编号必须线性(不退回 O(n²))', async () => {
+  // 逐段拼字符串的写法在 1 万段上要 2 秒以上且随段数平方增长;这里卡一个宽松上限
+  const parts = ['# 压测文档'];
+  for (let i = 0; i < 2500; i += 1) parts.push('', `## 第 ${i} 节`, '', `第 ${i} 节正文。`, '', '- 列表甲', '- 列表乙');
+  const buf = await word.writeDocx({ markdown: parts.join('\n') }, { title: 'perf' });
+  const paragraphs = scanParagraphs(await partText(buf, 'document.xml')).length;
+  if (paragraphs < 10000) throw new Error('测试前提不成立: 段落数只有 ' + paragraphs);
+  const timeOf = async (ops) => { const t0 = Date.now(); await editDocx(buf, ops); return Date.now() - t0; };
+  const style = await timeOf([{ op: 'set_style', scope: 'all', sizePt: 14 }]);
+  const numbering = await timeOf([{ op: 'set_numbering', scope: 'all' }]);
+  const replace = await timeOf([{ op: 'replace_text', find: '节正文', replace: '节正文内容' }]);
+  const budget = 900;
+  const slow = [['set_style', style], ['set_numbering', numbering], ['replace_text', replace]].filter(([, ms]) => ms > budget);
+  if (slow.length) throw new Error(`${paragraphs} 段超过 ${budget}ms: ` + slow.map(([n, ms]) => `${n} ${ms}ms`).join('、'));
+  return `${paragraphs} 段：改样式 ${style}ms / 编号 ${numbering}ms / 替换 ${replace}ms`;
+});
+
+await t('编号: 预置方案与标题样式识别', async () => {
+  if (NUMBERING_PRESETS.join() !== 'multicol-1_1_1,gongwen-1_1_1_1') throw new Error('预置方案变了: ' + NUMBERING_PRESETS.join());
+  if (levelTextAt(0) !== '%1.' || levelTextAt(2) !== '%1.%2.%3') throw new Error('各级编号文字不对: ' + levelTextAt(0) + '/' + levelTextAt(2));
+  const styles = (await openOoxml(await word.writeDocx({ markdown: '# 标题' }, { title: 't' }), 'docx')).zip.file('word/styles.xml').asText();
+  const ids = headingStyleIds(styles);
+  if (ids.get(1) !== 'Heading1' || ids.get(3) !== 'Heading3') throw new Error('标题样式识别不对: ' + JSON.stringify([...ids]));
+  return `1→${ids.get(1)}、3→${ids.get(3)}；${levelTextAt(0)} / ${levelTextAt(1)} / ${levelTextAt(2)}`;
+});
+
+await t('编号: 标题挂样式链接 + 正文列表按当前标题层级挂下一级', async () => {
+  const md = ['# 概述', '', '本章说明。', '', '- 要点一', '- 要点二', '', '## 细节', '', '- 细节点', '', '# 结论', '', '- 结论点'].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  const { buf: out, changes } = await editDocx(buf, [{ op: 'set_numbering', scope: 'all', style: 'multicol-1_1_1', linkToHeading: true }]);
+  if (!/正文列表 4 段/.test(changes[0])) throw new Error('列表段计数不对: ' + changes[0]);
+  // 只看那一段自己的 XML 里有没有 numPr(避免匹配到后面列表段)
+  const plainParagraphHasNoNumbering = (xml) => {
+    const target = scanParagraphs(xml).find((p) => p.text === '本章说明。');
+    return Boolean(target) && !/<w:numPr>/.test(xml.slice(target.start, target.end));
+  };
+  const doc = await partText(out, 'document.xml');
+  const numbering = await partText(out, 'numbering.xml');
+  const markers = [
+    ['新建了多级 abstractNum', /<w:multiLevelType w:val="multilevel"\/>/.test(numbering)],
+    ['一级挂 Heading1', /<w:lvl w:ilvl="0">[\s\S]*?<w:pStyle w:val="Heading1"\/>[\s\S]*?<w:lvlText w:val="%1\."\/>/.test(numbering)],
+    ['二级挂 Heading2 且文字为 %1.%2', /<w:lvl w:ilvl="1">[\s\S]*?<w:pStyle w:val="Heading2"\/>[\s\S]*?<w:lvlText w:val="%1\.%2"\/>/.test(numbering)],
+    ['正文列表用 ilvl=1', /<w:numPr><w:ilvl w:val="1"\/><w:numId w:val="\d+"\/><\/w:numPr>/.test(doc)],
+    ['H2 下的列表用 ilvl=2', /<w:numPr><w:ilvl w:val="2"\/><w:numId w:val="\d+"\/><\/w:numPr>/.test(doc)],
+    ['普通正文没被编号', plainParagraphHasNoNumbering(doc)],
+    ['标题段落没写 numPr(靠样式链接)', !/w:pStyle w:val="Heading1"\/><w:numPr>/.test(doc)],
+  ];
+  const bad = markers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  const back = await word.readDocx(out, {});
+  if (!back.content.includes('概述')) throw new Error('文档读不回来了');
+  return changes[0];
+});
+
+await t('编号: 公文式预置(一、/（一）/1./（1）)', async () => {
+  const md = ['# 一、总体情况', '', '## （一）主要进展', '', '- 完成事项甲', '', '### 1. 具体做法', '', '- 做法细节'].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  const { buf: out, changes } = await editDocx(buf, [{ op: 'set_numbering', scope: 'all', style: 'gongwen-1_1_1_1' }]);
+  if (!changes[0].includes('gongwen-1_1_1_1')) throw new Error('结果没写方案名: ' + changes[0]);
+  const numbering = await partText(out, 'numbering.xml');
+  const block = numbering.slice(numbering.indexOf('<w:nsid w:val="0D5F0002"'));
+  if (!block.startsWith('<w:nsid') && !block.includes('<w:nsid w:val="0D5F0002"/>')) throw new Error('公文方案的 nsid 没写对');
+  const levels = (block.match(/<w:lvl w:ilvl="\d+">[\s\S]*?<\/w:lvl>/g) || []).slice(0, 4).map((b) => ({
+    fmt: (b.match(/<w:numFmt w:val="([^"]+)"\/>/) || [])[1],
+    text: (b.match(/<w:lvlText w:val="([^"]+)"\/>/) || [])[1],
+    style: (b.match(/<w:pStyle w:val="([^"]+)"\/>/) || [])[1],
+  }));
+  const want = [
+    { fmt: 'chineseCounting', text: '%1、', style: 'Heading1' },
+    { fmt: 'chineseCounting', text: '（%2）', style: 'Heading2' },
+    { fmt: 'decimal', text: '%3.', style: 'Heading3' },
+    { fmt: 'decimal', text: '（%4）', style: 'Heading4' },
+  ];
+  for (let i = 0; i < want.length; i += 1) {
+    const got = levels[i];
+    if (got?.fmt !== want[i].fmt || got?.text !== want[i].text || got?.style !== want[i].style) {
+      throw new Error(`第 ${i + 1} 级不对: 期望 ${JSON.stringify(want[i])}，实际 ${JSON.stringify(got)}`);
+    }
+  }
+  // 正文列表挂在「当前标题层级的下一级」:H2 下 → ilvl=2(显示「1.」)、H3 下 → ilvl=3(显示「（1）」)
+  const doc = await partText(out, 'document.xml');
+  const listIlvls = scanParagraphs(doc)
+    .filter((p) => /<w:numPr>/.test(doc.slice(p.start, p.end)))
+    .map((p) => (doc.slice(p.start, p.end).match(/<w:ilvl w:val="(\d+)"\/>/) || [])[1]);
+  if (listIlvls.join() !== '2,3') throw new Error('正文列表的层级没按标题链挂: ' + listIlvls.join());
+  if (!(await word.readDocx(out, {})).content.includes('完成事项甲')) throw new Error('文档读不回来了');
+  const err = await (async () => { try { await editDocx(buf, [{ op: 'set_numbering', style: 'x' }]); return ''; } catch (e) { return e.message; } })();
+  if (!err.includes('gongwen-1_1_1_1')) throw new Error('style 报错没列出公文预置: ' + err);
+  return `一、/（一）/1./（1）四级都对；${changes[0].replace(/^.*?：/, '')}`;
+});
+
+await t('编号: 读取时展开成文字(公文 一、/（一）/1.)', async () => {
+  const md = ['# 总体要求', '', '正文甲', '', '## 工作目标', '', '正文乙', '', '## 重点任务', '', '### 具体措施', '', '# 保障措施'].join('\n');
+  const buf = await editDocx(await word.writeDocx({ markdown: md }, { title: 't' }), [
+    { op: 'set_numbering', style: 'gongwen-1_1_1_1' },
+  ]).then((r) => r.buf);
+  const read = await word.readDocx(buf, {});
+  const lines = read.content.split('\n').filter((line) => line.trim());
+  const expected = ['一、 总体要求', '正文甲', '（一） 工作目标', '正文乙', '（二） 重点任务', '1. 具体措施', '二、 保障措施'];
+  if (lines.join('|') !== expected.join('|')) throw new Error('展开结果不对: ' + lines.join('|'));
+  // 兄弟项目 official-doc-rules 的行首规则要能认出来
+  const RULES = [/^[一二三四五六七八九十]+、/, /^（[一二三四五六七八九十]+）/, /^\d+\./];
+  const levels = lines.map((line) => RULES.findIndex((re) => re.test(line)));
+  if (levels.join() !== '0,-1,1,-1,1,2,0') throw new Error('行首规则识别不对: ' + levels.join());
+  if (!read.html.includes('<h1>一、 总体要求</h1>')) throw new Error('HTML 里没有编号: ' + read.html);
+  if (!read.meta.messages[0]?.includes('5 段自动编号')) throw new Error('没提示展开了多少段: ' + read.meta.messages.join());
+  // 没有编号的文件不该被改动
+  const plain = await word.readDocx(await word.writeDocx({ markdown: md }, { title: 't' }), {});
+  if (/^[一二三四五六七八九十]+、/m.test(plain.content) || plain.meta.messages.length) {
+    throw new Error('无编号文件被改动了: ' + JSON.stringify(plain.content));
+  }
+  return `5 段标题 → ${expected.join(' / ')}`;
+});
+
+await t('编号: 展开时认得 exclude / startFrom / 西式方案', async () => {
+  const md = ['# 甲', '', '## 甲一', '', '### 甲一一', '', '# 乙'].join('\n');
+  const base = await word.writeDocx({ markdown: md }, { title: 't' });
+  const readWith = async (spec) => (await word.readDocx((await editDocx(base, [spec])).buf, {})).content.split('\n').filter((l) => l.trim());
+  const multicol = await readWith({ op: 'set_numbering', style: 'multicol-1_1_1' });
+  if (multicol.join('|') !== '1. 甲|1.1 甲一|1.1.1 甲一一|2. 乙') throw new Error('西式方案不对: ' + multicol.join('|'));
+  const excluded = await readWith({ op: 'set_numbering', style: 'gongwen-1_1_1_1', exclude: ['Heading3'] });
+  if (excluded.join('|') !== '一、 甲|（一） 甲一|甲一一|二、 乙') throw new Error('exclude 不对: ' + excluded.join('|'));
+  const fromH2 = await readWith({ op: 'set_numbering', style: 'gongwen-1_1_1_1', startFrom: { Heading2: 1 } });
+  if (fromH2.join('|') !== '甲|一、 甲一|（一） 甲一一|乙') throw new Error('startFrom 不对: ' + fromH2.join('|'));
+  return '1. / 1.1 / 1.1.1、exclude、startFrom 都对';
+});
+
+await t('编号: 项目符号不展开成文字,编号列表展开', async () => {
+  const buf = await word.writeDocx({ markdown: '- 甲\n- 乙\n\n1. 丙\n2. 丁' }, { title: 't' });
+  const read = await word.readDocx(buf, {});
+  if (read.content.includes('●') || read.content.includes('•')) throw new Error('项目符号被写进正文了: ' + JSON.stringify(read.content));
+  if (!read.content.includes('1. 丙')) throw new Error('编号列表没展开: ' + JSON.stringify(read.content));
+  if (!read.html.includes('<ul><li>甲</li>')) throw new Error('项目符号列表的 HTML 结构变了: ' + read.html);
+  return '● 保持列表结构，1. 展开成文字';
+});
+
+await t('编号: formatCounter 覆盖中文/罗马/字母等数字格式', async () => {
+  const cases = [
+    ['decimal', 7, '7'], ['decimalZero', 7, '07'],
+    ['chineseCounting', 1, '一'], ['chineseCounting', 10, '十'], ['chineseCounting', 11, '十一'],
+    ['chineseCounting', 20, '二十'], ['chineseCounting', 21, '二十一'], ['chineseCounting', 101, '一百零一'],
+    ['chineseCounting', 110, '一百一十'], ['ideographDigital', 12, '十二'],
+    ['lowerLetter', 1, 'a'], ['upperLetter', 26, 'Z'], ['upperLetter', 27, 'AA'],
+    ['lowerRoman', 4, 'iv'], ['upperRoman', 9, 'IX'],
+    ['ordinal', 3, 'third'], ['cardinalText', 5, 'five'],
+  ];
+  for (const [fmt, value, want] of cases) {
+    const got = formatCounter(fmt, value);
+    if (got !== want) throw new Error(`${fmt}(${value}) = ${got}，应为 ${want}`);
+  }
+  return `${cases.length} 种数字格式`;
+});
+
+// ---------------------------------------------------------------------------
+// 图片嵌入(PNG/JPEG/GIF/BMP 按魔数读尺寸,本地文件或 data: URL,不联网)
+// ---------------------------------------------------------------------------
+const imgDir = join(outDir, 'img');
+await mkdir(imgDir, { recursive: true });
+
+function crc32(buf) {
+  let crc = 0xffffffff;
+  for (const byte of buf) {
+    crc ^= byte;
+    for (let k = 0; k < 8; k += 1) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const head = Buffer.alloc(4);
+  head.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([head, body, crc]);
+}
+function pngBuffer(w, h) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const raw = Buffer.concat(Array.from({ length: h }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 3, 0x80)])));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr), pngChunk('IDAT', deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+/** 图片写入需要注入读取器：core 不碰文件系统，沙箱路径解析由工具层负责。 */
+const testReadImage = async (src) => readFileSync(isAbsolute(src) ? src : join(process.cwd(), src));
+
+const smallPng = join(imgDir, 'small.png');
+const widePng = join(imgDir, 'wide.png');
+const photoJpg = join(imgDir, 'photo.jpg');
+const animGif = join(imgDir, 'anim.gif');
+writeFileSync(smallPng, pngBuffer(40, 20));
+writeFileSync(widePng, pngBuffer(1600, 400));
+// SOI + SOF0(高 300、宽 200) + EOI
+writeFileSync(photoJpg, Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x2c, 0x00, 0xc8, 0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00]), Buffer.from([0xff, 0xd9])]));
+const gifBytes = Buffer.alloc(20);
+gifBytes.write('GIF89a', 0, 'latin1');
+gifBytes.writeUInt16LE(10, 6);
+gifBytes.writeUInt16LE(6, 8);
+writeFileSync(animGif, gifBytes);
+
+await t('图片: 按魔数读尺寸(PNG/JPEG/GIF/BMP)', async () => {
+  const cases = [[smallPng, 'png', 40, 20], [widePng, 'png', 1600, 400], [photoJpg, 'jpg', 200, 300], [animGif, 'gif', 10, 6]];
+  for (const [file, type, width, height] of cases) {
+    const got = probeImage(readFileSync(file));
+    if (got?.type !== type || got.width !== width || got.height !== height) {
+      throw new Error(`${file} 读成 ${JSON.stringify(got)}，应为 ${type} ${width}×${height}`);
+    }
+  }
+  if (probeImage(Buffer.from('这不是图片'))) throw new Error('文本被误认成图片');
+  if (probeImage(Buffer.alloc(0))) throw new Error('空 buffer 被误认成图片');
+  return 'PNG / JPEG / GIF 尺寸与魔数都对';
+});
+
+await t('图片: 尺寸换算(等比 + 缩到页内)', async () => {
+  const image = { width: 1600, height: 400 };
+  const capped = fitImageSize(image, { maxWidth: 600, maxHeight: 900 });
+  if (capped.width !== 600 || capped.height !== 150) throw new Error('等比缩放不对: ' + JSON.stringify(capped));
+  const byWidth = fitImageSize({ width: 200, height: 300 }, { widthHint: 100 });
+  if (byWidth.width !== 100 || byWidth.height !== 150) throw new Error('只给宽度时没按比例算高度: ' + JSON.stringify(byWidth));
+  const tall = fitImageSize({ width: 100, height: 4000 }, { maxWidth: 600, maxHeight: 900 });
+  if (tall.height !== 900 || tall.width !== 23) throw new Error('超高图片没缩到页高内: ' + JSON.stringify(tall));
+  const zero = fitImageSize({ width: 100, height: 100 }, { widthHint: 0.1 });
+  if (zero.width < 1 || zero.height < 1) throw new Error('尺寸被算成 0: ' + JSON.stringify(zero));
+  return '600×150 / 100×150 / 23×900';
+});
+
+await t('图片: <img> 嵌成真图片(不是 alt 文字)', async () => {
+  const md = `标题\n\n![小图](${smallPng})\n\n<img src="${photoJpg}" alt="证照" width="100">\n\n<img src="${widePng}">\n\n<img src="${smallPng}" style="width:80px">\n\n<img src="data:image/png;base64,${readFileSync(smallPng).toString('base64')}">`;
+  const buf = await word.writeDocx({ markdown: md }, { title: 't', readImage: testReadImage });
+  const doc = await partText(buf, 'document.xml');
+  const px = (emu) => Math.round(Number(emu) / 9525);
+  const sizes = (doc.match(/<wp:extent cx="(\d+)" cy="(\d+)"\/>/g) || [])
+    .map((m) => m.match(/\d+/g).map(px).join('x'));
+  if (sizes.length !== 5) throw new Error(`嵌进去 ${sizes.length} 张，应为 5 张: ${sizes.join(' ')}`);
+  if (sizes[0] !== '40x20') throw new Error('原始尺寸没保留: ' + sizes[0]);
+  if (sizes[1] !== '100x150') throw new Error('width=100 没按比例算高度: ' + sizes[1]);
+  if (!sizes[2].startsWith('60') || Number(sizes[2].split('x')[1]) > 900) throw new Error('超宽图片没缩到页内: ' + sizes[2]);
+  if (sizes[3] !== '80x40') throw new Error('CSS width:80px 没生效: ' + sizes[3]);
+  const { zip } = await openOoxml(buf, 'docx');
+  const media = Object.keys(zip.files).filter((name) => /^word\/media\/.+\.(png|jpg)$/.test(name));
+  // 同一张图用了几次只存一份(尺寸不同也只是显示参数不同)
+  if (media.length !== 3) throw new Error('媒体部件数不对(同图应复用): ' + media.join());
+  const rels = zip.file('word/_rels/document.xml.rels').asText();
+  if ((rels.match(/media\//g) || []).length !== 3) throw new Error('关系数不对: ' + rels);
+  if (!/descr="证照"/.test(doc) && !/name="证照"/.test(doc)) throw new Error('alt 文字没写进图片属性: ' + doc.slice(doc.indexOf('graphicFrame') - 200, doc.indexOf('graphicFrame')));
+  if (!(await word.readDocx(buf, {})).content.includes('标题')) throw new Error('带图片的文档读不回来了');
+  return `${sizes.join(' / ')}，媒体部件 ${media.length} 个`;
+});
+
+await t('图片: 行内图片与无 src 的 alt 退回', async () => {
+  const buf = await word.writeDocx({ html: `<p>前<img src="${smallPng}" alt="图标">后</p>` }, { title: 't', readImage: testReadImage });
+  const doc = await partText(buf, 'document.xml');
+  if (!/<w:drawing>/.test(doc)) throw new Error('行内图片没嵌入');
+  const order = ['前', 'w:drawing', '后'].map((key) => doc.indexOf(key));
+  if (!(order[0] < order[1] && order[1] < order[2])) throw new Error('行内图片位置不对: ' + order.join());
+  const fallback = await word.writeDocx({ html: '<p>前<img alt="占位说明">后</p>' }, { title: 't' });
+  if (!(await word.readDocx(fallback, {})).content.includes('前占位说明后')) throw new Error('没有 src 时没退回 alt 文字');
+  return '行内嵌入 + 无 src 退回 alt';
+});
+
+await t('图片: 远程/缺失/不支持格式/超大 都给出明确报错', async () => {
+  const expect = async (html, code, needle) => {
+    try {
+      await word.writeDocx({ html }, { title: 't', readImage: testReadImage });
+    } catch (err) {
+      if (err.code !== code) throw new Error(`${code} 变成了 ${err.code}: ${err.message}`);
+      if (!err.message.includes(needle)) throw new Error(`${code} 的说明里没有「${needle}」: ${err.message}`);
+      return;
+    }
+    throw new Error(`${code} 没有报错`);
+  };
+  await expect('<img src="https://x.test/a.png">', 'IMAGE_REMOTE', '不联网');
+  await expect(`<img src="${join(imgDir, '不存在.png')}">`, 'IMAGE_NOT_FOUND', '读不到图片文件');
+  await expect('<img src="README.md">', 'IMAGE_UNSUPPORTED', '只支持 PNG');
+  await expect('<img src="data:image/webp;base64,AAAA">', 'IMAGE_UNSUPPORTED', 'data URL');
+  const huge = join(imgDir, 'huge.png');
+  writeFileSync(huge, Buffer.concat([readFileSync(smallPng), Buffer.alloc(9 * 1024 * 1024)]));
+  await expect(`<img src="${huge}">`, 'IMAGE_TOO_LARGE', '8 MB');
+  const loaded = await loadImage(smallPng, testReadImage);
+  if (loaded.type !== 'png') throw new Error('loadImage 没返回类型');
+  return '4 类错误码 + 上限提示';
+});
+
+await t('表格: 读取公式本体(value / formula / both)', async () => {
+  const ExcelJS = (await import('@wekanteam/exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('S');
+  ws.addRow(['项目', '金额']);
+  ws.addRow(['甲', 1]);
+  ws.addRow(['乙', 2]);
+  ws.getCell('A4').value = '合计';
+  ws.getCell('B4').value = { formula: 'SUM(B2:B3)', result: 3 };
+  const path = join(outDir, 'formula.xlsx');
+  writeFileSync(path, Buffer.from(await wb.xlsx.writeBuffer()));
+  const bodyOf = async (opts) => (await office.opRead(path, opts, {})).content.split('```tsv')[1].split('```')[0].trim().split('\n').at(-1);
+  /** @type {Array<[object, string]>} */
+  const cases = [[{}, '合计\t3'], [{ formulas: 'formula' }, '合计\t=SUM(B2:B3)'], [{ formulas: 'both' }, '合计\t=SUM(B2:B3) → 3'], [{ formulas: true }, '合计\t=SUM(B2:B3)']];
+  for (const [opts, want] of cases) {
+    const got = await bodyOf(opts);
+    if (got !== want) throw new Error(`${JSON.stringify(opts)} 读成 ${got}，应为 ${want}`);
+  }
+  let message = '';
+  try { await office.opRead(path, { formulas: 'x' }, {}); } catch (err) { message = `${err.code}|${err.message}`; }
+  if (!message.startsWith('INVALID_ARGS')) throw new Error('非法 formulas 没报错: ' + message);
+  // 走 SheetJS 的老格式/二进制格式也认公式(.ods 会保留公式记录)
+  const XLSX = await import('@e965/xlsx');
+  const sheet = XLSX.utils.aoa_to_sheet([['项目', '数值'], ['甲', 100], ['乙', 200]]);
+  sheet.A4 = { t: 's', v: '合计' };
+  sheet.B4 = { t: 'n', f: 'SUM(B2:B3)', v: 300 };
+  sheet['!ref'] = 'A1:B4';
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, '数据');
+  const odsPath = join(outDir, 'formula.ods');
+  writeFileSync(odsPath, Buffer.from(XLSX.write(book, { type: 'buffer', bookType: 'ods' })));
+  const legacy = (await office.opRead(odsPath, { formulas: 'both' }, {})).content;
+  if (!legacy.includes('=SUM(B2:B3) → 300')) throw new Error('.ods 的公式没读出来: ' + legacy.split('```tsv')[1]);
+  return 'value / formula / both / true 简写 / .ods 都对';
+});
+
+await t('表格: .xlsb 能识别并交给 SheetJS(不再误判成损坏文件)', async () => {
+  const XLSX = await import('@e965/xlsx');
+  const sheet = XLSX.utils.aoa_to_sheet([['项目', '数值'], ['甲', 100], ['乙', 200]]);
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, '数据');
+  const path = join(outDir, 'binary.xlsb');
+  writeFileSync(path, Buffer.from(XLSX.write(book, { type: 'buffer', bookType: 'xlsb' })));
+  const read = await office.opRead(path, {}, {});
+  if (read.meta.reported.length !== 1 || !read.content.includes('乙\t200')) throw new Error('.xlsb 没读出来: ' + JSON.stringify(read.content));
+  if (read.content.includes('0 个工作表')) throw new Error('.xlsb 被当成空工作簿了: ' + read.content);
+  const query = await office.opQuery(path, {}, {});
+  if (!query.content.includes('乙')) throw new Error('.xlsb 没算出来: ' + JSON.stringify(query.content).slice(0, 200));
+  // 二进制工作簿的主部件是 xl/workbook.bin,不能被当成 .xlsx 交给 ExcelJS
+  const { officePartOf } = await import('../lib/core/ooxml.js');
+  const { zip } = await openOoxml(readFileSync(path), 'xlsb');
+  const main = officePartOf(zip);
+  if (main.kind !== 'xlsb' || main.path !== 'xl/workbook.bin') throw new Error('主部件识别不对: ' + JSON.stringify(main && { kind: main.kind, path: main.path }));
+  return '主部件 xl/workbook.bin → SheetJS，读取与查询都正常';
+});
+
+await t('表格: 条件格式(9 种规则 + 差异样式)', async () => {
+  const buf = await excel.buildWorkbook({ sheets: [{ name: 'S', rows: [['项目', '金额'], ['甲', 120], ['乙', 30]] }] });
+  const out = await excel.editWorkbook(buf, [
+    { op: 'conditional_format', sheet: 1, range: 'B2:B3', rules: [
+      { type: 'cellIs', operator: 'greaterThan', value: 50, style: { color: '9C0006', fill: 'FFC7CE', bold: true } },
+      { type: 'expression', formula: 'MOD(ROW(),2)=0', style: { italic: true } },
+      { type: 'colorScale', colors: ['F8696B', 'FFEB84', '63BE7B'] },
+      { type: 'dataBar', color: '63BE7B' },
+      { type: 'iconSet', iconSet: '3TrafficLights1' },
+      { type: 'top10', rank: 3, bottom: true },
+      { type: 'aboveAverage', aboveAverage: false },
+      { type: 'containsText', text: '甲', style: { fill: 'FFFF00' } },
+      { type: 'timePeriod', timePeriod: 'last7Days' },
+    ] },
+  ]);
+  const xml = await partText(out.buf, 'xl/worksheets/sheet1.xml');
+  const ruleTypes = [...xml.matchAll(/<cfRule type="([A-Za-z0-9]+)"/g)].map((m) => m[1]);
+  const want = ['cellIs', 'expression', 'colorScale', 'dataBar', 'iconSet', 'top10', 'aboveAverage', 'containsText', 'timePeriod'];
+  if (ruleTypes.join() !== want.join()) throw new Error('规则类型不对: ' + ruleTypes.join());
+  const priorities = (xml.match(/priority="(\d+)"/g) || []).map((m) => Number(m.replaceAll(/\D/g, '')));
+  if (priorities.join() !== '1,2,3,4,5,6,7,8,9') throw new Error('优先级不是依次递增: ' + priorities.join());
+  if (!/sqref="B2:B3"/.test(xml)) throw new Error('作用区域不对');
+  if (!/<colorScale>[\s\S]*?<cfvo type="percentile" val="50"\/>/.test(xml)) throw new Error('三色阶没写百分位中点');
+  if (!/<dxfs count="3">/.test(await partText(out.buf, 'xl/styles.xml'))) throw new Error('差异样式(dxf)数量不对');
+  // 差异格式的填充走 bgColor(dxf 约定)
+  const styles = await partText(out.buf, 'xl/styles.xml');
+  if (!/<dxf>[\s\S]*?<bgColor rgb="FFFFC7CE"\/>/.test(styles)) throw new Error('dxf 填充没写 bgColor: ' + styles.slice(styles.indexOf('<dxfs'), styles.indexOf('</dxfs>')));
+  return `${ruleTypes.length} 种规则，优先级 1–9，dxf 3 个`;
+});
+
+await t('表格: 条件格式的参数校验', async () => {
+  const buf = await excel.buildWorkbook({ sheets: [{ name: 'S', rows: [['项目', '金额'], ['甲', 1]] }] });
+  /** @type {Array<[object, string]>} */
+  const bad = [
+    [{ op: 'conditional_format', range: 'B2', rule: { type: 'unknown' } }, 'conditional_format 的 type'],
+    [{ op: 'conditional_format', range: 'B2', rule: { type: 'cellIs', operator: 'bigger', value: 1 } }, 'operator'],
+    [{ op: 'conditional_format', range: 'B2', rule: { type: 'cellIs', operator: 'between', value: 1 } }, '两个阈值'],
+    [{ op: 'conditional_format', range: 'B2', rule: { type: 'cellIs' } }, '需要 value'],
+    [{ op: 'conditional_format', range: 'B2', rule: { type: 'colorScale', colors: ['FF0000'] } }, '2 个或 3 个颜色'],
+    [{ op: 'conditional_format', range: 'B2:B', rule: { type: 'expression', formula: 'A1>0' } }, 'range 形如'],
+    [{ op: 'conditional_format', range: 'B2', rule: { type: 'containsText' } }, 'text'],
+  ];
+  for (const [op, needle] of bad) {
+    let message = '';
+    try { await excel.editWorkbook(buf, [op]); } catch (err) { message = err.message; }
+    if (!message.includes(needle)) throw new Error(`${JSON.stringify(op)} 的报错不对: ${message}`);
+  }
+  return `${bad.length} 种参数错误都有明确提示`;
+});
+
+await t('表格: 数据验证(下拉 / 区间 / 公式)', async () => {
+  const buf = await excel.buildWorkbook({ sheets: [{ name: 'S', rows: [['项目', '金额', '状态'], ['甲', 1, '']] }] });
+  const out = await excel.editWorkbook(buf, [
+    { op: 'data_validation', sheet: 1, range: 'C2:C100', rule: { type: 'list', values: ['待办', '进行中', '已完成'], promptTitle: '选择状态', prompt: '从下拉里选', errorTitle: '值不对', error: '只能选下拉里的值' } },
+    { op: 'data_validation', sheet: 1, range: 'D2:D9', rule: { type: 'list', source: '=Sheet2!$A$1:$A$5' } },
+    { op: 'data_validation', sheet: 1, range: 'B2:B100', rule: { type: 'whole', operator: 'between', value: 1, value2: 10, error: '只能 1-10' } },
+    { op: 'data_validation', sheet: 1, range: 'E2:E9', rule: { type: 'custom', formula: 'ISNUMBER(E2)' } },
+  ]);
+  const xml = await partText(out.buf, 'xl/worksheets/sheet1.xml');
+  if (!/<dataValidations count="4">/.test(xml)) throw new Error('验证条数不对: ' + (xml.match(/<dataValidations[^>]*>/) || [])[0]);
+  if (!/<formula1>&quot;待办,进行中,已完成&quot;<\/formula1>/.test(xml)) throw new Error('下拉候选没写成字面量列表');
+  if (!/<formula1>Sheet2!\$A\$1:\$A\$5<\/formula1>/.test(xml)) throw new Error('区域来源没去掉等号');
+  if (!/<formula1>1<\/formula1><formula2>10<\/formula2>/.test(xml)) throw new Error('区间上下限没写全');
+  if (!/promptTitle="选择状态"|errorTitle="值不对"/.test(xml)) throw new Error('提示语没写进去');
+  /** @type {Array<[object, string]>} */
+  const bad = [
+    [{ op: 'data_validation', range: 'C2', rule: { type: 'list' } }, 'values'],
+    [{ op: 'data_validation', range: 'C2', rule: { type: 'list', values: [] } }, '空数组'],
+    [{ op: 'data_validation', range: 'C2', rule: { type: 'unknown' } }, 'data_validation 的 type'],
+    [{ op: 'data_validation', range: 'C2', rule: { type: 'whole' } }, '需要 value'],
+  ];
+  for (const [op, needle] of bad) {
+    let message = '';
+    try { await excel.editWorkbook(buf, [op]); } catch (err) { message = err.message; }
+    if (!message.includes(needle)) throw new Error(`${JSON.stringify(op)} 的报错不对: ${message}`);
+  }
+  // 再改两次值:条件格式与数据验证要还在,而且不能越写越多(exceljs 会把区域拆散再合并错)
+  let again = out.buf;
+  for (const cell of ['A3', 'A4', 'A5']) {
+    again = (await excel.editWorkbook(again, [{ op: 'set_value', sheet: 1, ref: cell, value: '乙' }])).buf;
+  }
+  const xml2 = await partText(again, 'xl/worksheets/sheet1.xml');
+  if (!/<dataValidations count="4">/.test(xml2)) throw new Error('后续编辑把数据验证弄丢了/变多了: ' + (xml2.match(/<dataValidations[^>]*>/) || [])[0]);
+  if (!/sqref="C2:C100"/.test(xml2)) throw new Error('区域被写成了别的形状: ' + (xml2.match(/sqref="[^"]*"/g) || []).join());
+  return '4 条验证 + 4 类参数错误，反复编辑不丢不涨';
+});
+
+await t('编号: 幂等——重复调用原地替换,不新增重复定义', async () => {
+  const md = ['# 概述', '', '- 要点一', '', '## 细节', '', '- 细节点'].join('\n');
+  let buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  const snapshot = async () => {
+    const { zip } = await openOoxml(buf, 'docx');
+    const numbering = zip.file('word/numbering.xml').asText();
+    const doc = zip.file('word/document.xml').asText();
+    return {
+      abstract: (numbering.match(/<w:abstractNum /g) || []).length,
+      nums: (numbering.match(/<w:num /g) || []).length,
+      numIds: [...new Set(doc.match(/<w:numId w:val="\d+"\/>/g) || [])].join(),
+      hasNsid: /<w:nsid w:val="0D5F0001"\/>/.test(numbering),
+    };
+  };
+  const first = await editDocx(buf, [{ op: 'set_numbering', scope: 'all' }]);
+  buf = first.buf;
+  const a = await snapshot();
+  if (!a.hasNsid) throw new Error('我们那份 abstractNum 没带 nsid,无法识别与替换');
+  if (first.changes[0].includes('更新已有编号定义')) throw new Error('第一次不该说「更新已有」: ' + first.changes[0]);
+  for (let i = 0; i < 2; i += 1) buf = (await editDocx(buf, [{ op: 'set_numbering', scope: 'all' }])).buf;
+  const b = await snapshot();
+  if (b.abstract !== a.abstract || b.nums !== a.nums) throw new Error(`重复调用新增了重复定义: ${JSON.stringify(a)} → ${JSON.stringify(b)}`);
+  if (b.numIds !== a.numIds) throw new Error('numId 变了,段落里的引用会失效: ' + a.numIds + ' → ' + b.numIds);
+  const third = await editDocx(buf, [{ op: 'set_numbering', scope: 'all' }]);
+  if (!third.changes[0].includes('更新已有编号定义')) throw new Error('幂等替换没有在结果里说明: ' + third.changes[0]);
+  if (a.abstract === 0) throw new Error('测试前提不成立');
+  return `3 次调用后仍是 abstractNum ${b.abstract} / num ${b.nums}，numId 稳定 ${b.numIds}`;
+});
+
+await t('编号: exclude 指定不参与的标题样式', async () => {
+  const md = ['# 一、总体情况', '', '## （一）进展', '', '- 细节甲', '', '## （二）问题', '', '- 问题甲'].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  const { buf: out, changes } = await editDocx(buf, [{ op: 'set_numbering', scope: 'all', exclude: ['Heading1'], startFrom: { Heading2: 1 } }]);
+  const numbering = await partText(out, 'numbering.xml');
+  const chain = (numbering.slice(numbering.indexOf('<w:nsid w:val="0D5F0001"')).match(/<w:lvl w:ilvl="\d+">[\s\S]*?<\/w:lvl>/g) || [])
+    .map((block) => (block.match(/<w:pStyle w:val="([^"]+)"\/>/) || [])[1]);
+  if (chain[0] !== 'Heading2' || chain[1] !== 'Heading3') throw new Error('链没有从 Heading2 开始: ' + chain.slice(0, 3).join(','));
+  if (chain.includes('Heading1')) throw new Error('Heading1 被 exclude 了却还在链上: ' + chain.join(','));
+  if (!/正文列表 2 段/.test(changes[0])) throw new Error('H2 下的列表应被编号: ' + changes[0]);
+  const back = await word.readDocx(out, {});
+  if (!back.content.includes('细节甲')) throw new Error('文档读不回来了');
+  return `链首 = ${chain[0]}；${changes[0].replace(/^.*?：/, '')}`;
+});
+
+await t('编号: startFrom 指定起始样式与起始数字', async () => {
+  const md = ['# 一、总体情况', '', '- 要点甲', '', '## （一）进展', '', '- 细节甲'].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  // 起始数字:第一级从 5 开始
+  const from = await editDocx(buf, [{ op: 'set_numbering', scope: 'all', startFrom: { Heading1: 5 } }]);
+  const numbering = await partText(from.buf, 'numbering.xml');
+  const block = numbering.slice(numbering.indexOf('<w:nsid w:val="0D5F0001"'));
+  const firstLevel = (block.match(/<w:lvl w:ilvl="0">[\s\S]*?<\/w:lvl>/) || [])[0];
+  if (!/<w:start w:val="5"\/>/.test(firstLevel)) throw new Error('第一级起始数字没生效: ' + firstLevel);
+  if (!/<w:lvlText w:val="%1\."\/>/.test(firstLevel)) throw new Error('第一级编号文字不对: ' + firstLevel);
+  // 从 Heading2 起:比它浅的标题样式不参与,其下的列表被跳过并如实报出
+  const skip = await editDocx(buf, [{ op: 'set_numbering', scope: 'all', startFrom: { Heading2: 1 } }]);
+  if (!/跳过 1 段/.test(skip.changes[0])) throw new Error('H1 下的列表应被跳过并报出: ' + skip.changes[0]);
+  const doc = await partText(skip.buf, 'document.xml');
+  if (!/<w:numPr><w:ilvl w:val="1"\/>/.test(doc)) throw new Error('H2 下的列表应挂 ilvl=1: ' + doc.slice(0, 200));
+  return `${from.changes[0].replace(/^.*?：/, '')}；${skip.changes[0].replace(/^.*?：/, '')}`;
+});
+
+await t('编号: exclude / startFrom 的参数错误', async () => {
+  const buf = await word.writeDocx({ markdown: '# 概述\n\n- 要点一' }, { title: 't' });
+  const fail = async (ops) => { try { await editDocx(buf, ops); return { code: '', message: '' }; } catch (e) { return { code: e.code, message: e.message }; } };
+  const cases = [
+    { label: 'exclude 认不出', spec: { exclude: ['MyStyle'] }, want: 'INVALID_ARGS', text: '认不出' },
+    { label: 'exclude 非数组', spec: { exclude: 'Heading1' }, want: 'INVALID_ARGS', text: '需为数组' },
+    { label: 'startFrom 两个键', spec: { startFrom: { Heading1: 1, Heading2: 1 } }, want: 'INVALID_ARGS', text: '只能给一个样式' },
+    { label: 'startFrom 认不出', spec: { startFrom: { 大标题: 1 } }, want: 'INVALID_ARGS', text: '认不出' },
+    { label: 'startFrom 数字非法', spec: { startFrom: { Heading1: 0 } }, want: 'INVALID_ARGS', text: '需为 1–9999' },
+    { label: 'exclude 排除所有标题', spec: { exclude: ['Heading1', 'Heading2', 'Heading3', 'Heading4', 'Heading5', 'Heading6', 'Heading7', 'Heading8', 'Heading9'] }, want: 'INVALID_ARGS', text: '没有可编号的级别' },
+  ];
+  for (const c of cases) {
+    const got = await fail([{ op: 'set_numbering', scope: 'all', ...c.spec }]);
+    if (got.code !== c.want || !got.message.includes(c.text)) {
+      throw new Error(`${c.label} 期望 ${c.want}/「${c.text}」，实际 ${got.code || '没报错'}/${got.message}`);
+    }
+  }
+  return `${cases.length} 种参数错误`;
+});
+
+await t('编号: numbering.xml 缺失时自动补出部件与关系', async () => {
+  const buf = await word.writeDocx({ markdown: '# 概述\n\n- 要点一\n- 要点二' }, { title: 't' });
+  const { zip } = await openOoxml(buf, 'docx');
+  zip.remove('word/numbering.xml');
+  const stripped = zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+  const { buf: out } = await editDocx(stripped, [{ op: 'set_numbering', scope: 'all' }]);
+  const { zip: after } = await openOoxml(out, 'docx');
+  const numbering = after.file('word/numbering.xml');
+  if (!numbering) throw new Error('numbering.xml 没被补出来');
+  if (!numbering.asText().includes('<w:abstractNum')) throw new Error('补出来的 numbering.xml 里没有 abstractNum');
+  if (!/numbering\.xml/.test(after.file('word/_rels/document.xml.rels').asText())) throw new Error('关系没补');
+  if (!/word\/numbering\.xml/.test(after.file('[Content_Types].xml').asText())) throw new Error('Content_Types 没补');
+  if (!(await word.readDocx(out, {})).content.includes('要点一')) throw new Error('文档读不回来');
+  return '部件 + 关系 + Content_Types 三件套';
+});
+
+await t('编号: 参数错误与无可编号段落', async () => {
+  const buf = await word.writeDocx({ markdown: '# 概述\n\n普通正文\n\n- 要点一' }, { title: 't' });
+  const codeOf = async (ops) => { try { await editDocx(buf, ops); return ''; } catch (e) { return e.code; } };
+  const msgOf = async (ops) => { try { await editDocx(buf, ops); return ''; } catch (e) { return e.message; } };
+  const cases = [
+    { label: 'style 不在预置里', ops: [{ op: 'set_numbering', style: 'multicol-1_1_1_1' }], want: 'INVALID_ARGS' },
+    { label: 'linkToHeading 非布尔', ops: [{ op: 'set_numbering', linkToHeading: 'yes' }], want: 'INVALID_ARGS' },
+    { label: 'scope 非法', ops: [{ op: 'set_numbering', scope: 'each' }], want: 'INVALID_ARGS' },
+    { label: '表格内没有可编号段落', ops: [{ op: 'set_numbering', scope: 'table' }], want: 'PARAGRAPH_NOT_FOUND' },
+  ];
+  for (const { label, ops, want } of cases) {
+    const got = await codeOf(ops);
+    if (got !== want) throw new Error(label + ' 期望 ' + want + '，实际 ' + (got || '没报错'));
+  }
+  const styleMsg = await msgOf([{ op: 'set_numbering', style: 'x' }]);
+  if (!styleMsg.includes('multicol-1_1_1')) throw new Error('style 报错没列出预置值: ' + styleMsg);
+  // linkToHeading=false:标题显式编号
+  const { buf: out, changes } = await editDocx(buf, [{ op: 'set_numbering', scope: 'headings', linkToHeading: false }]);
+  const doc = await partText(out, 'document.xml');
+  if (!/<w:numPr><w:ilvl w:val="0"\/>/.test(doc)) {
+    throw new Error('linkToHeading=false 时标题应显式编号: ' + changes.join());
+  }
+  return `${cases.length} 种错误 + linkToHeading=false 路径`;
+});
+
+await t('角色选择: body 只改正文,headings 只改标题,table 只改表格内', async () => {
+  const md = [
+    '# 标题一', '', '正文第一段。', '',
+    '| 项目 | 金额 |', '| --- | --- |', '| 收入 | 1200 |', '',
+    '## 标题二', '', '正文第二段。',
+  ].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  const paragraphsOf = async (b) => {
+    const doc = await partText(b, 'document.xml');
+    return scanParagraphs(doc).map((p) => ({ text: p.text, heading: p.headingLevel, inTable: p.inTable }));
+  };
+  const all = await paragraphsOf(buf);
+  const headings = all.filter((p) => p.heading).length;
+  const inTable = all.filter((p) => p.inTable).length;
+  if (headings !== 2 || inTable < 4) throw new Error(`测试前提不成立: 标题 ${headings}、表格内 ${inTable}`);
+
+  const bodyOnly = await editDocx(buf, [{ op: 'set_style', scope: 'body', sizePt: 14, font: '仿宋' }]);
+  if (!bodyOnly.changes[0].includes(`${all.length - headings} 段`)) {
+    throw new Error(`body 应命中 ${all.length - headings} 段: ${bodyOnly.changes[0]}`);
+  }
+  const headingsOnly = await editDocx(buf, [{ op: 'set_style', scope: 'headings', sizePt: 22, font: '黑体' }]);
+  if (!headingsOnly.changes[0].includes(`${headings} 段`)) throw new Error(`headings 应命中 ${headings} 段: ${headingsOnly.changes[0]}`);
+  const tableOnly = await editDocx(buf, [{ op: 'set_style', scope: 'table', sizePt: 12, font: '楷体' }]);
+  if (!tableOnly.changes[0].includes(`${inTable} 段`)) throw new Error(`table 应命中 ${inTable} 段: ${tableOnly.changes[0]}`);
+
+  // 角色 + 区间叠加:第 7–8 段是「标题二 + 正文第二段」,scope=body 应只命中其中 1 段
+  const lastBody = all.length;
+  const scoped = await editDocx(buf, [{ op: 'set_style', scope: 'body', from: lastBody - 1, to: lastBody, sizePt: 13 }]);
+  if (!scoped.changes[0].includes('1 段')) throw new Error('角色 + 区间叠加没生效: ' + scoped.changes[0]);
+
+  // 只改正文时,标题的 Heading 样式必须原封不动
+  const bodyDoc = await partText(bodyOnly.buf, 'document.xml');
+  if (!/w:pStyle w:val="Heading1"/.test(bodyDoc)) throw new Error('改正文把标题样式抹掉了');
+  const bodyText = scanParagraphs(bodyDoc).filter((p) => p.headingLevel > 0).map((p) => p.text);
+  if (bodyText.join() !== '标题一,标题二') throw new Error('标题内容被改了: ' + bodyText.join());
+  return `全部 ${all.length} 段 = 标题 ${headings} + 正文 ${all.length - headings}（含表格内 ${inTable}）`;
+});
+
+await t('表格: 框线与列宽规格(含按内容自动分配)', async () => {
+  const spec = normalizeTableSpec({ borders: 'three-line', headerShading: 'F2F2F2', headerBold: false, columnWidthMode: 'auto', align: 'center' });
+  if (spec.borders !== 'three-line' || spec.headerShading !== 'f2f2f2' || spec.headerBold !== false) throw new Error('表格规格不对: ' + JSON.stringify(spec));
+  if (spec.columnMode !== 'auto' || spec.align !== 'center') throw new Error('列宽模式/对齐不对: ' + JSON.stringify(spec));
+  const manual = normalizeTableSpec({ columnWidths: [3, 5, 2] });
+  if (manual.columnMode !== 'manual') throw new Error('给了 columnWidths 应自动切到 manual');
+  if (manual.columnPercents.join() !== '30,50,20') throw new Error('百分比应按比例归一: ' + manual.columnPercents.join());
+  const auto = autoColumnPercents([2, 10, 6]);
+  if (auto.length !== 3 || auto.reduce((a, b) => a + b, 0) !== 100) throw new Error('自动列宽应为和为 100 的数组: ' + auto);
+  if (!(auto[1] > auto[2] && auto[2] > auto[0])) throw new Error('应按内容长度排序: ' + auto);
+  if (autoColumnPercents([500, 1, 1])[0] > 92) throw new Error('超长列不该把其他列挤没: ' + autoColumnPercents([500, 1, 1]));
+  if (normalizeTableSpec({ headerShading: 'none' }).headerShading !== null) throw new Error('headerShading:"none" 应表示去掉底纹');
+  const bad = [
+    { spec: { borders: 'double' }, want: 'borders 可为' },
+    { spec: { columnWidthMode: 'manual' }, want: '需要同时给 columnWidths' },
+    { spec: { columnWidths: [] }, want: 'columnWidths 需为' },
+    { spec: { headerShading: 'red' }, want: 'headerShading 需为' },
+    { spec: { align: 'middle' }, want: 'align 可为' },
+  ];
+  for (const { spec: spec2, want } of bad) {
+    let msg = '';
+    try { normalizeTableSpec(spec2); } catch (e) { msg = e.message; }
+    if (!msg.includes(want)) throw new Error(JSON.stringify(spec2) + ' 的报错不对: ' + msg);
+  }
+  return '三线表 / 自动列宽 / 5 种非法规格';
+});
+
+await t('表格: 扫描行列与内容', async () => {
+  const buf = await word.writeDocx({ markdown: '| A | B |\n| --- | --- |\n| 1 | 2 |\n\n中间段落\n\n| C |\n| --- |\n| 3 |' }, { title: 't' });
+  const { zip } = await openOoxml(buf, 'docx');
+  const tables = scanTables(zip.file('word/document.xml').asText());
+  if (tables.length !== 2) throw new Error('应扫到两个表格: ' + tables.length);
+  if (tables[0].rows !== 2 || tables[0].cols !== 2) throw new Error('第一个表应为 2×2: ' + JSON.stringify(tables[0]));
+  if (tables[1].rows !== 2 || tables[1].cols !== 1) throw new Error('第二个表应为 2×1: ' + JSON.stringify(tables[1]));
+  return tables.map((t) => t.rows + '×' + t.cols).join(' / ');
+});
+
+await t('表格: set_table 三线表 / 表头底纹 / 居中', async () => {
+  const buf = await word.writeDocx({ markdown: '| 姓名 | 部门 | 备注 |\n| --- | --- | --- |\n| 张三 | 技术研发中心 | 负责人 |' }, { title: 't' });
+  const { buf: out, changes } = await editDocx(buf, [
+    { op: 'set_table', borders: 'three-line', headerShading: 'F2F2F2', headerBold: true, align: 'center' },
+  ]);
+  const doc = await partText(out, 'document.xml');
+  const markers = [
+    ['上下粗线', /<w:top w:val="single" w:sz="12"/.test(doc) && /<w:bottom w:val="single" w:sz="12"/.test(doc)],
+    ['无竖线', /<w:insideV w:val="none"/.test(doc) && /<w:left w:val="none"/.test(doc)],
+    ['表头下细线', /<w:tcBorders><w:bottom w:val="single" w:sz="6"/.test(doc)],
+    ['表头底纹', doc.includes('w:fill="f2f2f2"')],
+    ['表头加粗', doc.includes('<w:b/>')],
+    ['表格居中', /<w:jc w:val="center"\/>/.test(doc)],
+  ];
+  const bad = markers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  if (!changes[0].includes('1 个表格')) throw new Error('结果描述不对: ' + changes[0]);
+  const md = htmlToMarkdown((await word.readDocx(out, {})).html);
+  if (!md.includes('张三')) throw new Error('内容被破坏');
+  return changes[0];
+});
+
+await t('表格: 列宽 auto 按内容 / manual 百分比', async () => {
+  const md = '| 姓名 | 部门 | 备注 |\n| --- | --- | --- |\n| 张三 | 技术研发中心 | 负责人 |';
+  const widthsOf = async (tableSpec) => {
+    const buf = await word.writeDocx({ markdown: md }, { title: 't', style: { table: tableSpec } });
+    const doc = await partText(buf, 'document.xml');
+    return (doc.match(/<w:gridCol w:w="(\d+)"\/>/g) || []).map((s) => Number(s.replaceAll(/\D/g, '')));
+  };
+  const autoWidths = await widthsOf({ columnWidthMode: 'auto' });
+  if (autoWidths.length !== 3) throw new Error('列数不对: ' + autoWidths);
+  if (!(autoWidths[1] > autoWidths[2] && autoWidths[2] > autoWidths[0])) throw new Error('auto 没按内容分配: ' + autoWidths);
+  const manualWidths = await widthsOf({ columnWidths: [20, 50, 30] });
+  const sum = manualWidths.reduce((a, b) => a + b, 0);
+  const ratios = manualWidths.map((w) => Math.round((w / sum) * 100));
+  if (ratios.join() !== '20,50,30') throw new Error('manual 比例不对: ' + ratios.join());
+  if (!(await partText(await word.writeDocx({ markdown: md }, { title: 't', style: { table: { columnWidths: [50, 25, 25] } } }), 'document.xml')).includes('w:tblLayout w:type="fixed"')) {
+    throw new Error('指定列宽时应用固定布局');
+  }
+  return `auto ${autoWidths.join('/')} · manual ${ratios.join('/')}`;
+});
+
+await t('表格: 增删行列与合并单元格', async () => {
+  const buf = await word.writeDocx({ markdown: '| A | B | C |\n| --- | --- | --- |\n| a1 | b1 | c1 |\n| a2 | b2 | c2 |' }, { title: 't' });
+  const sizeOf = async (b) => {
+    const doc = await partText(b, 'document.xml');
+    const t = scanTables(doc)[0];
+    return `${t.rows}×${t.cols}`;
+  };
+  const r1 = await editDocx(buf, [{ op: 'insert_table_row', at: 2, count: 1 }]);
+  if (await sizeOf(r1.buf) !== '4×3') throw new Error('插行后应为 4×3: ' + await sizeOf(r1.buf));
+  const r2 = await editDocx(r1.buf, [{ op: 'delete_table_row', at: 1, count: 1 }]);
+  if (await sizeOf(r2.buf) !== '3×3') throw new Error('删行后应为 3×3: ' + await sizeOf(r2.buf));
+  const r3 = await editDocx(r2.buf, [{ op: 'insert_table_column', at: 2, count: 2 }]);
+  if (await sizeOf(r3.buf) !== '3×5') throw new Error('插列后应为 3×5: ' + await sizeOf(r3.buf));
+  const r4 = await editDocx(r3.buf, [{ op: 'delete_table_column', at: 3, count: 2 }]);
+  if (await sizeOf(r4.buf) !== '3×3') throw new Error('删列后应为 3×3: ' + await sizeOf(r4.buf));
+  const r5 = await editDocx(r4.buf, [{ op: 'merge_table_cells', range: 'A1:B2' }]);
+  const doc = await partText(r5.buf, 'document.xml');
+  if (!/<w:gridSpan w:val="2"\/>/.test(doc) || !/<w:vMerge w:val="restart"\/>/.test(doc) || !/<w:vMerge\/>/.test(doc)) {
+    throw new Error('合并单元格的 gridSpan/vMerge 不对');
+  }
+  if ((await sizeOf(r5.buf)) !== '3×3') throw new Error('合并后网格列数不该变: ' + await sizeOf(r5.buf));
+  // 合并保留左上角内容:单独用一份干净表格验证,避免被前面的增删行影响
+  const clean = await word.writeDocx({ markdown: '| 甲 | 乙 | 丙 |\n| --- | --- | --- |\n| 1 | 2 | 3 |' }, { title: 't' });
+  const merged = await editDocx(clean, [{ op: 'merge_table_cells', range: 'A1:B1' }]);
+  const mergedMd = htmlToMarkdown((await word.readDocx(merged.buf, {})).html);
+  if (!mergedMd.includes('甲')) throw new Error('合并后左上角内容丢了: ' + mergedMd);
+  if (mergedMd.includes('乙')) throw new Error('被合并掉的单元格内容还在: ' + mergedMd);
+  if (!mergedMd.includes('丙')) throw new Error('区域外的单元格被动了: ' + mergedMd);
+  return `${await sizeOf(buf)} → 插行/删行/插列/删列/合并 各一步`;
+});
+
+await t('表格: 表头跨页重复 / 垂直对齐 / 行高 / 禁止断行', async () => {
+  const md = '| 项目 | 说明 |\n| --- | --- |\n| 甲 | 说明甲 |\n| 乙 | 说明乙 |';
+  // 写路径
+  const written = await partText(await word.writeDocx({ markdown: md }, {
+    title: 't',
+    style: { table: { repeatHeader: true, cellVerticalAlign: 'center', rowHeightPt: 24, cantSplit: true } },
+  }), 'document.xml');
+  // 改路径
+  const edited = await partText((await editDocx(await word.writeDocx({ markdown: md }, { title: 't' }), [
+    { op: 'set_table', table: 1, repeatHeader: true, cellVerticalAlign: 'bottom', rowHeightPt: 30, cantSplit: true },
+  ])).buf, 'document.xml');
+  const checks = [
+    ['写:表头重复', /<w:tblHeader\/>/.test(written)],
+    ['写:垂直居中', /<w:vAlign w:val="center"\/>/.test(written)],
+    ['写:行高 24pt=480', /<w:trHeight w:val="480" w:hRule="atLeast"\/>/.test(written)],
+    ['写:禁止断行', /<w:cantSplit\/>/.test(written)],
+    ['改:表头重复', /<w:tblHeader\/>/.test(edited)],
+    ['改:底部对齐', /<w:vAlign w:val="bottom"\/>/.test(edited)],
+    ['改:行高 30pt=600', /<w:trHeight w:val="600"/.test(edited)],
+  ];
+  const bad = checks.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  // tblHeader 只加在表头行:第一行有、最后一行没有
+  const rows = written.match(/<w:tr>[\s\S]*?<\/w:tr>/g) || [];
+  if (rows.length !== 3 || !/<w:tblHeader\/>/.test(rows[0]) || /<w:tblHeader\/>/.test(rows[2])) {
+    throw new Error('tblHeader 不该出现在非表头行');
+  }
+  const bad2 = [
+    { spec: { cellVerticalAlign: 'middle' }, want: 'cellVerticalAlign 可为' },
+    { spec: { rowHeightPt: 9999 }, want: 'rowHeightPt 需为' },
+    { spec: { repeatHeader: 'yes' }, want: 'repeatHeader 需为' },
+  ];
+  for (const { spec, want } of bad2) {
+    let message = '';
+    try { normalizeTableSpec(spec); } catch (e) { message = e.message; }
+    if (!message.includes(want)) throw new Error(JSON.stringify(spec) + ' 的报错不对: ' + message);
+  }
+  return `${checks.length} 项（写/改两条路径）`;
+});
+
+await t('表格: unmerge_table_cells 取消合并', async () => {
+  const md = '| A | B | C |\n| --- | --- | --- |\n| a1 | b1 | c1 |\n| a2 | b2 | c2 |';
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  const merged = await editDocx(buf, [{ op: 'merge_table_cells', table: 1, range: 'A1:B2' }]);
+  const mergedDoc = await partText(merged.buf, 'document.xml');
+  if (!/gridSpan w:val="2"/.test(mergedDoc) || !/vMerge/.test(mergedDoc)) throw new Error('测试前提不成立: 没合并成功');
+  const before = scanTables(mergedDoc)[0];
+  const unmerged = await editDocx(merged.buf, [{ op: 'unmerge_table_cells', table: 1, range: 'A1:B2' }]);
+  if (!unmerged.changes[0].includes('取消合并 A1:B2')) throw new Error('结果描述不对: ' + unmerged.changes[0]);
+  const doc = await partText(unmerged.buf, 'document.xml');
+  if (/gridSpan|vMerge/.test(doc)) throw new Error('取消合并后仍有 gridSpan/vMerge');
+  const after = scanTables(doc)[0];
+  if (after.rows !== before.rows || after.cols !== before.cols) {
+    throw new Error(`网格变了: ${before.rows}×${before.cols} → ${after.rows}×${after.cols}`);
+  }
+  // 区域外的内容不受影响
+  const mdOut = htmlToMarkdown((await word.readDocx(unmerged.buf, {})).html);
+  for (const keep of ['c1', 'a2', 'b2', 'c2']) {
+    if (!mdOut.includes(keep)) throw new Error('取消合并误伤了 ' + keep + ': ' + mdOut);
+  }
+  // 没合并过的区域要报错,而不是静默成功
+  let message = '';
+  try { await editDocx(buf, [{ op: 'unmerge_table_cells', table: 1, range: 'A1:B1' }]); } catch (e) { message = `${e.code}|${e.message}`; }
+  if (!message.startsWith('TABLE_NOT_MERGED')) throw new Error('未合并区域的报错不对: ' + message);
+  return `${before.rows}×${before.cols} 网格保持不变，区域外内容完好`;
+});
+
+await t('表格: delete_table 删除整表(含删空后的 0 行残留)', async () => {
+  const md = ['# 附录 A', '', '| 项目 | 说明 |', '| --- | --- |', '| 结构 | 说明文字 |', '',
+    '# 附录 B', '', '| 列1 | 列2 |', '| --- | --- |', '| r1 | x |', '| r2 | y |', '', '结语段落。'].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  const rowsOf = async (b, index) => {
+    const doc = await partText(b, 'document.xml');
+    const t = scanTables(doc)[index - 1];
+    return t ? t.rows : -1;
+  };
+  // 先把附录 B 的表格行删光(3 行),留下 0 行空表 —— 复现真实场景
+  const emptied = await editDocx(buf, [{ op: 'delete_table_row', table: 2, at: 1, count: 3 }]);
+  if (await rowsOf(emptied.buf, 2) !== 0) throw new Error('测试前提不成立: 行没删光');
+  // 0 行表上删行/删列都应给出「用 delete_table」的提示
+  for (const op of ['delete_table_row', 'delete_table_column']) {
+    let message = '';
+    try { await editDocx(emptied.buf, [{ op, table: 2, at: 1 }]); } catch (e) { message = e.message; }
+    if (!message.includes('delete_table')) throw new Error(`${op} 在 0 行表上的报错应提示 delete_table: ${message}`);
+  }
+  // delete_table 清掉残留
+  const { buf: out, changes } = await editDocx(emptied.buf, [{ op: 'delete_table', table: 2 }]);
+  if (!changes[0].includes('删除表格 2')) throw new Error('结果描述不对: ' + changes[0]);
+  if (await rowsOf(out, 2) !== -1) throw new Error('残留表格没删掉');
+  const mdOut = htmlToMarkdown((await word.readDocx(out, {})).html);
+  if (!mdOut.includes('结构')) throw new Error('附录 A 的表格被误删');
+  if (!mdOut.includes('结语段落。')) throw new Error('结语段落丢失');
+  if (!mdOut.includes('附录 A')) throw new Error('标题丢失');
+  return changes[0];
+});
+
+await t('表格: delete_table 的 onlyEmpty 一次清掉所有 0 行残留', async () => {
+  const md = ['# A', '', '| x |', '| --- |', '| 1 |', '', '正文段落', '', '# B', '', '| y |', '| --- |', '| 2 |', '', '# C', '', '| z |', '| --- |', '| 3 |', '', '结语段落'].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  // 把 B、C 两张表的行删光,留 0 行残留
+  const emptied = await editDocx(buf, [
+    { op: 'delete_table_row', table: 2, at: 1, count: 2 },
+    { op: 'delete_table_row', table: 3, at: 1, count: 2 },
+  ]);
+  const rowsOf = async (b) => scanTables(await partText(b, 'document.xml')).map((t) => t.rows).join(',');
+  if (await rowsOf(emptied.buf) !== '2,0,0') throw new Error('测试前提不成立: ' + await rowsOf(emptied.buf));
+  const cleaned = await editDocx(emptied.buf, [{ op: 'delete_table', scope: 'all', onlyEmpty: true }]);
+  if (!cleaned.changes[0].includes('删除表格 2、3')) throw new Error('结果描述不对: ' + cleaned.changes[0]);
+  if (await rowsOf(cleaned.buf) !== '2') throw new Error('清理后应只剩 1 张表: ' + await rowsOf(cleaned.buf));
+  const mdOut = htmlToMarkdown((await word.readDocx(cleaned.buf, {})).html);
+  for (const keep of ['**x**', '| 1 |', '正文段落', '结语段落', '# A']) {
+    if (!mdOut.includes(keep)) throw new Error('清理误伤了 ' + keep + ': ' + mdOut);
+  }
+  // 已经没有空表时给出清晰报错,而不是静默成功
+  let again = '';
+  try { await editDocx(cleaned.buf, [{ op: 'delete_table', onlyEmpty: true }]); } catch (e) { again = e.message; }
+  if (!again.includes('没有 0 行的空表格')) throw new Error('再次清理的报错不对: ' + again);
+  return cleaned.changes[0];
+});
+
+await t('表格: delete_table 的 scope:all 与正文结尾保护', async () => {
+  const two = await word.writeDocx({ markdown: '# A\n\n| x |\n| --- |\n| 1 |\n\n中间段落\n\n# B\n\n| y |\n| --- |\n| 2 |\n\n结尾段落' }, { title: 't' });
+  const all = await editDocx(two, [{ op: 'delete_table', scope: 'all' }]);
+  if (!all.changes[0].includes('删除表格 1、2')) throw new Error('scope:all 描述不对: ' + all.changes[0]);
+  if (scanTables(await partText(all.buf, 'document.xml')).length !== 0) throw new Error('还有表格残留');
+  const text = htmlToMarkdown((await word.readDocx(all.buf, {})).html);
+  if (!text.includes('中间段落') || !text.includes('结尾段落')) throw new Error('正文被误删: ' + text);
+
+  // 末尾是表格:删完不能让正文以表格结尾;只剩表格时还得补一个空段落
+  const tail = await word.writeDocx({ markdown: '正文段落。\n\n| x |\n| --- |\n| 1 |' }, { title: 't' });
+  const cut = await editDocx(tail, [{ op: 'delete_table', table: 1 }]);
+  const only = await editDocx(await word.writeDocx({ markdown: '| x |\n| --- |\n| 1 |' }, { title: 't' }), [{ op: 'delete_table', table: 1 }]);
+  for (const [label, b] of [['末尾表格', cut.buf], ['只剩表格', only.buf]]) {
+    const doc = await partText(b, 'document.xml');
+    const body = doc.slice(doc.indexOf('<w:body'), doc.lastIndexOf('<w:sectPr'));
+    if (body.trimEnd().endsWith('</w:tbl>')) throw new Error(`${label}: 正文仍以表格结尾`);
+    if (!/<w:p[\s/>]/.test(body)) throw new Error(`${label}: 正文里没有段落了`);
+    if (!(await word.readDocx(b, {})).meta) throw new Error(`${label}: 文档读不回来`);
+  }
+  return 'scope:all 删两张；正文结尾两种情况都兜住';
+});
+
+await t('表格: delete_table 的错误分支', async () => {
+  const withTable = await word.writeDocx({ markdown: '| A |\n| --- |\n| 1 |' }, { title: 't' });
+  const noTable = await word.writeDocx({ markdown: '只有正文' }, { title: 't' });
+  const fail = async (buf, ops) => { try { await editDocx(buf, ops); return { code: '', message: '' }; } catch (e) { return { code: e.code, message: e.message }; } };
+  const cases = [
+    { buf: noTable, ops: [{ op: 'delete_table' }], want: 'TABLE_NOT_FOUND', label: '文档里没有表格' },
+    { buf: withTable, ops: [{ op: 'delete_table', table: 9 }], want: 'TABLE_NOT_FOUND', label: '序号越界' },
+    { buf: withTable, ops: [{ op: 'delete_table', scope: 'each' }], want: 'INVALID_ARGS', label: 'scope 非法' },
+  ];
+  for (const c of cases) {
+    const got = await fail(c.buf, c.ops);
+    if (got.code !== c.want) throw new Error(`${c.label} 期望 ${c.want}，实际 ${got.code || '没报错'}`);
+  }
+  return `${cases.length} 种错误分支`;
+});
+
+await t('表格: 错误分支(选表 / 序号 / 区间)', async () => {
+  const withTable = await word.writeDocx({ markdown: '| A |\n| --- |\n| 1 |' }, { title: 't' });
+  const withoutTable = await word.writeDocx({ markdown: '只有正文' }, { title: 't' });
+  const twoTables = await word.writeDocx({ markdown: '| A |\n| --- |\n| 1 |\n\nx\n\n| B |\n| --- |\n| 2 |' }, { title: 't' });
+  const fail = async (buf, ops) => { try { await editDocx(buf, ops); return { code: '', message: '' }; } catch (e) { return { code: e.code, message: e.message }; } };
+  const cases = [
+    { buf: withoutTable, ops: [{ op: 'set_table', borders: 'all' }], want: 'TABLE_NOT_FOUND', label: '没有表格' },
+    { buf: twoTables, ops: [{ op: 'set_table', borders: 'all' }], want: 'INVALID_ARGS', label: '多个表格却没给序号' },
+    { buf: withTable, ops: [{ op: 'set_table', table: 9, borders: 'all' }], want: 'TABLE_NOT_FOUND', label: '序号越界' },
+    { buf: withTable, ops: [{ op: 'set_table', table: 1 }], want: 'INVALID_ARGS', label: 'set_table 没给属性' },
+    { buf: withTable, ops: [{ op: 'delete_table_row', at: 9 }], want: 'INVALID_ARGS', label: '删行越界' },
+    { buf: withTable, ops: [{ op: 'delete_table_column', at: 9 }], want: 'INVALID_ARGS', label: '删列越界' },
+    { buf: withTable, ops: [{ op: 'merge_table_cells', range: 'A1:B9' }], want: 'INVALID_ARGS', label: '合并越界' },
+    { buf: withTable, ops: [{ op: 'merge_table_cells', range: 'A1' }], want: 'INVALID_ARGS', label: 'range 格式错' },
+    { buf: twoTables, ops: [{ op: 'set_table', scope: 'each', borders: 'all' }], want: 'INVALID_ARGS', label: 'scope 非法' },
+    { buf: withTable, ops: [{ op: 'set_style', scope: 'headings', sizePt: 12 }], want: 'PARAGRAPH_NOT_FOUND', label: '角色没匹配到段落' },
+    { buf: withTable, ops: [{ op: 'set_style', scope: 'body', table: { borders: 'all' } }], want: 'INVALID_ARGS', label: 'set_style 里塞 table' },
+  ];
+  for (const c of cases) {
+    const got = await fail(c.buf, c.ops);
+    if (got.code !== c.want) throw new Error(`${c.label} 期望 ${c.want}，实际 ${got.code || '没报错'}: ${got.message}`);
+  }
+  return `${cases.length} 种错误分支`;
+});
+
+await t('表格: 按内容分配列宽时超长单元不吞掉其他列', async () => {
+  const md = `| 短 | 很长的列内容需要占据更多宽度但也不能把别的列吃掉 | 中 |\n| --- | --- | --- |\n| 1 | ${'长'.repeat(80)} | 2 |`;
+  const buf = await word.writeDocx({ markdown: md }, { title: 't', style: { table: { columnWidthMode: 'auto' } } });
+  const doc = await partText(buf, 'document.xml');
+  const widths = (doc.match(/<w:gridCol w:w="(\d+)"\/>/g) || []).map((s) => Number(s.replaceAll(/\D/g, '')));
+  const sum = widths.reduce((a, b) => a + b, 0);
+  const shares = widths.map((w) => Math.round((w / sum) * 100));
+  if (shares[1] > 92) throw new Error('超长列占得太多: ' + shares.join());
+  if (shares[0] < 3 || shares[2] < 3) throw new Error('其他列被挤没了: ' + shares.join());
+  return shares.join('/');
+});
+
+await t('排版: 超长畸形 line-height 必须线性失败(不变 O(n²))', () => {
+  // `\d*\.?\d+` 这类重叠量词在 6 万位数字串上要 2 秒;line-height 来自不可信的 HTML,必须挡住
+  const bad = '1'.repeat(60000) + 'X';
+  const t0 = Date.now();
+  const sa = paragraphStyleFromCss(declarationsFrom(`line-height:${bad}`), 32);
+  const sb = paragraphStyleFromCss(declarationsFrom(`line-height:${bad}pt`), 32);
+  const ms = Date.now() - t0;
+  if (sa.line !== undefined || sb.line !== undefined) throw new Error('畸形行高不该被解析出数值');
+  if (ms > 300) throw new Error(`解析 ${bad.length} 字符耗时 ${ms}ms，疑似回退到超线性匹配`);
+  const ok = paragraphStyleFromCss(declarationsFrom('line-height:1.5'), 32);
+  if (ok.line !== 360 || ok.lineRule !== 'auto') throw new Error('正常倍数行高解析错了: ' + JSON.stringify(ok));
+  return `6 万字符 ${ms}ms 内失败`;
+});
+
+await t('排版: 内联 CSS 解析(font-family / line-height / text-indent / margin)', async () => {
+  const decls = declarationsFrom('font-family: 仿宋_GB2312, Times New Roman; font-size: 16pt; line-height: 28.8pt; text-indent: 2em; text-align: justify; margin: 12pt 0');
+  const run = runStyleFromCss(decls);
+  if (run.font !== '仿宋_GB2312' || run.fontAscii !== 'Times New Roman') throw new Error('中/西文字体没分开: ' + JSON.stringify(run));
+  if (run.sizeHalfPt !== 32) throw new Error('字号没解析: ' + run.sizeHalfPt);
+  const para = paragraphStyleFromCss(decls, 32);
+  if (para.line !== 576 || para.lineRule !== 'exact') throw new Error('行距没解析: ' + JSON.stringify(para));
+  if (para.firstLineTwips !== 640) throw new Error('缩进没解析: ' + para.firstLineTwips);
+  if (para.align !== 'both') throw new Error('对齐没解析: ' + para.align);
+  if (para.beforeTwips !== 240 || para.afterTwips !== 240) throw new Error('段前段后没解析: ' + JSON.stringify(para));
+  return '中文字体/西文字体/固定行距/缩进/段前后都解析出来了';
+});
+
+await t('排版: 文档级 style 写进 docDefaults(整篇默认)', async () => {
+  const buf = await word.writeDocx({ html: '<p>正文</p>' }, {
+    title: 't',
+    style: { font: '仿宋_GB2312', sizePt: 16, lineSpacingPt: 28.8, firstLineIndentChars: 2, align: 'both', headings: { font: '黑体', sizePt: 16 } },
+  });
+  const styles = await partText(buf, 'styles.xml');
+  const defaults = styles.slice(styles.indexOf('<w:docDefaults'), styles.indexOf('</w:docDefaults>') + 16);
+  const markers = [
+    ['中文字体进 docDefaults', defaults.includes('仿宋_GB2312') && defaults.includes('w:eastAsia="仿宋_GB2312"')],
+    ['三号(32 半磅)', defaults.includes('w:sz w:val="32"')],
+    ['行距固定值 576', defaults.includes('w:line="576"') && defaults.includes('w:lineRule="exact"')],
+    ['首行缩进 640', defaults.includes('w:firstLine="640"')],
+    ['两端对齐', defaults.includes('w:jc w:val="both"')],
+    ['标题样式用黑体', /w:styleId="Heading1"[\s\S]*?黑体/.test(styles)],
+  ];
+  const bad = markers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  return `${markers.length} 项默认排版都落到 styles.xml`;
+});
+
+await t('排版: 内联样式落到段落与 run,并能被容器继承', async () => {
+  const html = '<div style="font-family: 楷体_GB2312, Times New Roman; font-size: 16pt; line-height: 28.8pt; text-indent: 2em">'
+    + '<p>div 里继承下来的段落</p></div>'
+    + '<p style="font-family:黑体;font-size:16pt;text-align:center;margin:12pt 0">单独指定的一段</p>';
+  const buf = await word.writeDocx({ html }, { title: 't' });
+  const doc = await partText(buf, 'document.xml');
+  const markers = [
+    ['div 的字体传给子段落', doc.includes('w:eastAsia="楷体_GB2312"')],
+    ['中西文字体分开', doc.includes('w:ascii="Times New Roman"') && doc.includes('w:eastAsia="楷体_GB2312"')],
+    ['div 的行距传给子段落', doc.includes('w:line="576"') && doc.includes('w:lineRule="exact"')],
+    ['div 的首行缩进传给子段落', doc.includes('w:firstLine="640"')],
+    ['段落自身 style 生效(黑体+居中)', doc.includes('w:eastAsia="黑体"') && doc.includes('w:jc w:val="center"')],
+    ['段前段后 12 磅', doc.includes('w:before="240"') && doc.includes('w:after="240"')],
+  ];
+  const bad = markers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  return `${markers.length} 项内联样式都生效`;
+});
+
+await t('排版: 改已有文档 set_style(全篇 + 单段 + 区间)', async () => {
+  const buf = await word.writeDocx({ markdown: '# 合同标题\n\n第一条 金额 100 元。\n\n第二条 期限 30 天。\n\n第三条 附则。' }, { title: 't' });
+  const { buf: out, changes } = await editDocx(buf, [
+    { op: 'set_style', scope: 'all', font: '仿宋_GB2312', sizePt: 16, lineSpacingPt: 28.8, firstLineIndentChars: 2, align: 'both' },
+    { op: 'set_style', match: '合同标题', font: '黑体', sizePt: 22, lineSpacingPt: 33, align: 'center', firstLineIndentChars: 0 },
+    { op: 'set_style', from: 3, to: 3, spacingBeforePt: 6 },
+  ]);
+  if (!changes[0].includes('7 段') && !/设置 \d+ 段样式/.test(changes[0])) throw new Error('全篇改样式的结果描述不对: ' + changes[0]);
+  const doc = await partText(out, 'document.xml');
+  const md = htmlToMarkdown((await word.readDocx(out, {})).html);
+  const markers = [
+    ['正文仿宋三号', doc.includes('w:eastAsia="仿宋_GB2312"') && doc.includes('w:sz w:val="32"')],
+    ['正文固定行距+首行缩进', doc.includes('w:line="576"') && doc.includes('w:firstLine="640"')],
+    ['标题黑体二号+居中', doc.includes('w:eastAsia="黑体"') && doc.includes('w:sz w:val="44"') && doc.includes('w:jc w:val="center"')],
+    ['标题不缩进', doc.includes('w:firstLine="0"')],
+    ['标题的 Heading1 样式没被抹掉', doc.includes('w:pStyle w:val="Heading1"')],
+    ['区间段前距 6 磅', doc.includes('w:before="120"')],
+    ['标签配对完好', (doc.match(/<w:r>/g) || []).length === (doc.match(/<\/w:r>/g) || []).length],
+    ['正文内容没被改', md.includes('第一条 金额 100 元。') && md.includes('第三条 附则。')],
+  ];
+  const bad = markers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (bad.length) throw new Error('缺失: ' + bad.join(', '));
+  return changes.join(' / ');
+});
+
+await t('排版: set_style 不覆盖没提到的格式(加粗/字号保留)', async () => {
+  const buf = await word.writeDocx({ markdown: '普通一段\n\n**加粗**与普通混排' }, { title: 't' });
+  const { buf: out } = await editDocx(buf, [{ op: 'set_style', scope: 'all', font: '仿宋_GB2312', firstLineIndentChars: 2 }]);
+  const doc = await partText(out, 'document.xml');
+  if (!doc.includes('<w:b/>')) throw new Error('原有的加粗被抹掉了');
+  if (doc.includes('w:sz w:val=')) throw new Error('没提到字号却写入了 sz');
+  if (doc.includes('w:line=')) throw new Error('没提到行距却写入了 line');
+  return '只写入了 font 与 firstLine,加粗保留';
+});
+
+await t('排版: set_style 的错误分支', async () => {
+  const buf = await word.writeDocx({ markdown: '第一段\n\n第二段' }, { title: 't' });
+  const codeOf = async (ops) => { try { await editDocx(buf, ops); return ''; } catch (e) { return e.code; } };
+  const cases = [
+    { label: '没给样式属性', ops: [{ op: 'set_style' }], want: 'INVALID_ARGS' },
+    { label: 'scope 非法', ops: [{ op: 'set_style', scope: 'each', sizePt: 12 }], want: 'INVALID_ARGS' },
+    { label: '字号非法', ops: [{ op: 'set_style', scope: 'all', sizePt: 0 }], want: 'INVALID_ARGS' },
+    { label: 'from > to', ops: [{ op: 'set_style', from: 2, to: 1, sizePt: 12 }], want: 'INVALID_ARGS' },
+    { label: '区间越界', ops: [{ op: 'set_style', from: 9, to: 12, sizePt: 12 }], want: 'PARAGRAPH_NOT_FOUND' },
+    { label: 'match 找不到', ops: [{ op: 'set_style', match: '不存在', sizePt: 12 }], want: 'PARAGRAPH_NOT_FOUND' },
+    { label: '对齐值非法', ops: [{ op: 'set_style', align: 'middle', scope: 'all' }], want: 'INVALID_ARGS' },
+    { label: '两个行距参数', ops: [{ op: 'set_style', scope: 'all', lineSpacingPt: 28, lineSpacingMultiple: 1.5 }], want: 'INVALID_ARGS' },
+  ];
+  for (const { label, ops, want } of cases) {
+    const got = await codeOf(ops);
+    if (got !== want) throw new Error(label + '(' + JSON.stringify(ops) + ') 期望 ' + want + '，实际 ' + (got || '没报错'));
+  }
+  return `${cases.length} 种错误分支`;
+});
+
+// ---------------------------------------------------------------------------
+// Word 局部修改:office_edit_docx
+// ---------------------------------------------------------------------------
+const CONTRACT_MD = [
+  '# 采购合同', '',
+  '甲方：某某科技有限公司', '',
+  '**金额**为 100 元。', '',
+  '| 项目 | 数量 |', '| --- | --- |', '| 键盘 | 10 |', '',
+  '乙方：某某贸易有限公司', '',
+  '附则：本合同一式两份。',
+].join('\n');
+
+/** 造一份带标题/加粗/表格的合同文档。 */
+async function writeContract(name = 'contract.docx') {
+  const { writeFile } = await import('node:fs/promises');
+  const path = join(outDir, name);
+  await writeFile(path, await word.writeDocx({ markdown: CONTRACT_MD }, { title: '合同' }));
+  return path;
+}
+
+/** zip 里每个部件的文本快照(用来证明只动了该动的部件)。 */
+async function partSnapshot(buf) {
+  const { zip } = await openOoxml(buf, 'docx');
+  const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir);
+  return new Map(names.map((n) => [n, zip.files[n].asText()]));
+}
+
+await t('word 编辑: 只重写正文部件,其余部件逐字节不变', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const path = await writeContract();
+  const buf = await readFile(path);
+  const before = await partSnapshot(buf);
+  const r = await editDocx(buf, [
+    { op: 'replace_text', find: '金额为 100', replace: '金额为 200' },
+    { op: 'insert_paragraph', text: '签署日期：2026-01-01', heading: 2, position: 'end' },
+    { op: 'delete_paragraph', paragraph: 2 },
+  ]);
+  const after = await partSnapshot(r.buf);
+  const changed = [...after.keys()].filter((n) => before.get(n) !== after.get(n));
+  if (changed.join() !== 'word/document.xml') throw new Error('被改动的部件不止正文: ' + changed.join(', '));
+  const untouched = [...before.keys()].filter((n) => !changed.includes(n));
+  if (!untouched.every((n) => before.get(n) === after.get(n))) throw new Error('有其它部件被改写');
+  const back = await word.readDocx(r.buf, {});
+  const md = htmlToMarkdown(back.html);
+  if (!md.includes('金额为 200')) throw new Error('替换没生效: ' + md);
+  if (md.includes('100 元')) throw new Error('旧值还在: ' + md);
+  if (md.includes('甲方：某某科技')) throw new Error('删除段落没生效');
+  if (!md.includes('乙方：某某贸易')) throw new Error('不该动的段落被改了: ' + md);
+  if (!md.includes('键盘')) throw new Error('表格被破坏');
+  if (!md.includes('## 签署日期')) throw new Error('插入的标题段落没生效');
+  return `${before.size} 个部件中仅正文变化`;
+});
+
+await t('word 编辑: 跨 run 查找替换(Word 常把一句话拆进多个 run)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const path = await writeContract('cross-run.docx');
+  const buf = await readFile(path);
+  // `**金额**为 100 元。` 被拆成加粗 run「金额」+ 普通 run「为 100 元。」
+  const paras = scanParagraphs((await openOoxml(buf, 'docx')).zip.file('word/document.xml').asText());
+  const target = paras.find((p) => p.text.includes('金额为 100'));
+  if (!target || target.segs.length < 2) throw new Error('测试前提不成立: 这句话没有被拆进多个 run');
+  const { buf: out, changes } = await editDocx(buf, [{ op: 'replace_text', find: '金额为 100 元', replace: '金额为 200 元' }]);
+  if (!changes[0].includes('1 处')) throw new Error('替换计数不对: ' + changes.join());
+  const md = htmlToMarkdown((await word.readDocx(out, {})).html);
+  if (!md.includes('200 元') || md.includes('100 元')) throw new Error('跨 run 替换结果不对: ' + md);
+  return `${target.segs.length} 个 run 之间完成替换`;
+});
+
+await t('word 编辑: 整段改写保留段落样式与字符格式', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const path = await writeContract('set-para.docx');
+  const buf = await readFile(path);
+  const { buf: out } = await editDocx(buf, [
+    { op: 'set_paragraph', match: '乙方：某某贸易有限公司', text: '乙方：某某物流有限公司' },
+    { op: 'set_paragraph', paragraph: 1, text: '采购合同（修订版）' },
+  ]);
+  const read = await word.readDocx(out, {});
+  const md = htmlToMarkdown(read.html);
+  if (!md.startsWith('# 采购合同（修订版）')) throw new Error('标题样式/内容不对: ' + md.slice(0, 40));
+  if (!md.includes('乙方：某某物流有限公司')) throw new Error('整段改写没生效');
+  const outline = await office.opRead(path, { outline: true });
+  if (outline.meta.headings < 1) throw new Error('测试文档本应有标题');
+  const edited = await office.opRead(path, {});
+  if (!edited.content.includes('采购合同')) throw new Error('原文件不该被这里改动(editDocx 只返回字节)');
+  return '标题仍是标题，正文已替换';
+});
+
+await t('word 编辑: 插入段落(含标题)与删除段落', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const path = await writeContract('ins-del.docx');
+  const buf = await readFile(path);
+  const { buf: out, paragraphsBefore, paragraphsAfter } = await editDocx(buf, [
+    { op: 'insert_paragraph', text: '第一章 总则', heading: 2, position: 'start' },
+    { op: 'insert_paragraph', text: '插入在附则之后', position: 'after', match: '附则：本合同一式两份。' },
+    { op: 'delete_paragraph', match: '甲方：某某科技有限公司' },
+  ]);
+  // 两个 insert + 一个 delete → 净增 1
+  if (paragraphsAfter !== paragraphsBefore + 1) throw new Error(`段落数应为 ${paragraphsBefore} → ${paragraphsBefore + 1}(插 2 删 1)：实际 ${paragraphsAfter}`);
+  const md = htmlToMarkdown((await word.readDocx(out, {})).html);
+  if (!md.includes('第一章 总则')) throw new Error('文首插入失败: ' + md.slice(0, 60));
+  if (!md.includes('插入在附则之后')) throw new Error('按 match 插入失败');
+  if (md.includes('甲方：某某科技')) throw new Error('删除段落失败');
+  if (md.indexOf('第一章 总则') > md.indexOf('采购合同')) throw new Error('文首插入位置不对');
+  if (md.indexOf('插入在附则之后') < md.indexOf('附则：本合同一式两份。')) throw new Error('after 位置不对');
+  const { zip } = await openOoxml(out, 'docx');
+  const xml = zip.file('word/document.xml').asText();
+  if (!xml.trimEnd().endsWith('</w:document>')) throw new Error('正文 XML 结构被破坏');
+  if (xml.indexOf('<w:sectPr') < xml.lastIndexOf('<w:p>')) throw new Error('页面设置节点没被留在最后');
+  return `${paragraphsBefore} 段 → 插入 2 删 1 → ${paragraphsAfter} 段`;
+});
+
+await t('word 编辑: 文本中的 & < > 与首尾空格正确转义', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const path = await writeContract('escape.docx');
+  const buf = await readFile(path);
+  const tricky = '  A & B < C > D  ';
+  const { buf: out } = await editDocx(buf, [
+    { op: 'set_paragraph', match: '附则：本合同一式两份。', text: tricky },
+    { op: 'replace_text', find: '100', replace: '200 & 300' },
+  ]);
+  const { zip } = await openOoxml(out, 'docx');
+  const xml = zip.file('word/document.xml').asText();
+  if (xml.includes('< C >')) throw new Error('尖括号没有转义,文档结构会被破坏');
+  if (!xml.includes('xml:space="preserve"')) throw new Error('首尾空格没加 xml:space');
+  if ((xml.match(/xml:space="preserve"/g) || []).length > 40) throw new Error('xml:space 被重复写入');
+  const md = htmlToMarkdown((await word.readDocx(out, {})).html);
+  if (!md.includes('A & B < C > D')) throw new Error('实体解码回来不对: ' + md);
+  if (!md.includes('200 & 300')) throw new Error('替换文本里的 & 不对: ' + md);
+  return 'A & B < C > D 与首尾空格都对';
+});
+
+await t('word 编辑: 表格里的段落也能定位与改写', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const path = await writeContract('table-edit.docx');
+  const buf = await readFile(path);
+  const { zip } = await openOoxml(buf, 'docx');
+  const paras = scanParagraphs(zip.file('word/document.xml').asText());
+  const cell = paras.find((p) => p.text === '键盘');
+  if (!cell) throw new Error('没找到表格里的段落');
+  const { buf: out } = await editDocx(buf, [{ op: 'set_paragraph', match: '键盘', text: '机械键盘' }]);
+  const md = htmlToMarkdown((await word.readDocx(out, {})).html);
+  if (!md.includes('机械键盘')) throw new Error('表格单元格没改写成功: ' + md);
+  if (!md.includes('项目') || !md.includes('数量')) throw new Error('表头被破坏: ' + md);
+  return `表格内第 ${cell.index} 段改写成功`;
+});
+
+await t('word 编辑: limit 限制替换处数', async () => {
+  const { writeFile, readFile } = await import('node:fs/promises');
+  const path = join(outDir, 'limit.docx');
+  await writeFile(path, await word.writeDocx({ markdown: 'AAA 待办\n\nBBB 待办\n\nCCC 待办' }, { title: 'x' }));
+  const buf = await readFile(path);
+  const { buf: out, changes } = await editDocx(buf, [{ op: 'replace_text', find: '待办', replace: '完成', limit: 2 }]);
+  if (!changes[0].includes('2 处')) throw new Error('limit 没生效: ' + changes.join());
+  const md = htmlToMarkdown((await word.readDocx(out, {})).html);
+  if ((md.match(/完成/g) || []).length !== 2 || (md.match(/待办/g) || []).length !== 1) {
+    throw new Error('替换处数不对: ' + md);
+  }
+  const all = await editDocx(buf, [{ op: 'replace_text', find: '待办', replace: '完成' }]);
+  if (!all.changes[0].includes('3 处')) throw new Error('不限次数时应替换 3 处: ' + all.changes.join());
+  return 'limit=2 只改前两处，不限时改 3 处';
+});
+
+await t('word 编辑: 定位失败 / 参数非法都有清晰报错', async () => {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const path = await writeContract('errors.docx');
+  const buf = await readFile(path);
+  const fail = async (ops) => { try { await editDocx(buf, ops); return { code: '', message: '' }; } catch (e) { return { code: e.code, message: e.message }; } };
+
+  const CASES = [
+    { ops: [], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'unknown_op' }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'delete_paragraph' }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'delete_paragraph', paragraph: 999 }], want: 'PARAGRAPH_NOT_FOUND' },
+    { ops: [{ op: 'delete_paragraph', paragraph: 0 }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'delete_paragraph', paragraph: 1.5 }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'delete_paragraph', match: '不存在的段落' }], want: 'PARAGRAPH_NOT_FOUND' },
+    { ops: [{ op: 'set_paragraph', paragraph: 1, text: '' }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'insert_paragraph', text: 'x', heading: 12 }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'insert_paragraph', text: 'x', position: 'middle' }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'insert_paragraph', text: 'x', position: 'before' }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'replace_text', find: '' }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'replace_text', find: 'x', limit: 0 }], want: 'INVALID_ARGS' },
+    { ops: [{ op: 'replace_text', find: 'x', limit: 'abc' }], want: 'INVALID_ARGS' },
+    { ops: Array.from({ length: 201 }, () => ({ op: 'delete_paragraph', paragraph: 1 })), want: 'INVALID_ARGS' },
+  ];
+  for (const { ops, want } of CASES) {
+    const got = await fail(ops);
+    if (got.code !== want) {
+      throw new Error(JSON.stringify(ops).slice(0, 58) + ' 期望 ' + want + '，实际 ' + (got.code || '没报错'));
+    }
+  }
+  const unknown = await fail([{ op: 'unknown_op' }]);
+  if (!unknown.message.includes('replace_text')) throw new Error('未知操作的报错没列出可用操作: ' + unknown.message);
+
+  // 唯一性:同一段文字出现两次时必须改用序号
+  const dup = join(outDir, 'dup.docx');
+  await writeFile(dup, await word.writeDocx({ markdown: '重复段\n\n重复段' }, { title: 'x' }));
+  const dupFail = await (async () => { try { await editDocx(await readFile(dup), [{ op: 'delete_paragraph', match: '重复段' }]); return ''; } catch (e) { return e.code; } })();
+  if (dupFail !== 'AMBIGUOUS_MATCH') throw new Error('重复段没有报歧义: ' + dupFail);
+
+  // 扩展名与文件不存在
+  const badExt = await office.opEditDocx(join(outDir, 'note.txt'), [], null).then(() => '', (e) => e.code);
+  if (badExt !== 'UNSUPPORTED_FORMAT') throw new Error('.txt 没被拦: ' + badExt);
+  const docExt = await office.opEditDocx(join(outDir, 'whatever.doc'), [{ op: 'delete_paragraph', paragraph: 1 }], null).then(() => '', (e) => e.code);
+  if (docExt !== 'NEED_CONVERT') throw new Error('.doc 应提示先转 .docx: ' + docExt);
+  const missing = await office.opEditDocx(join(outDir, 'nope.docx'), [{ op: 'delete_paragraph', paragraph: 1 }], null).then(() => '', (e) => e.code);
+  if (missing !== 'NOT_FOUND') throw new Error('文件不存在时错误码不对: ' + missing);
+  return `${CASES.length} 种非法输入 + 歧义匹配 + 3 种路径/格式错误`;
 });
 
 await t('excel: 读取工作簿内容', async () => {
@@ -798,17 +2187,23 @@ await t('安全: 解压炸弹 — 压缩比异常时拒绝(压缩包本身很小
   }
 });
 
-await t('安全: 写入 docx 不解析图片(只留 alt 文本,不联网)', async () => {
-  const buf = await word.writeDocx({
-    html: '<p>正文</p><img src="https://example.com/x.jpg" alt="图 1">',
-  });
-  if (!Buffer.isBuffer(buf) || buf.length === 0) throw new Error('含图片的 HTML 仍应生成 docx');
+await t('安全: 远程图片一律拒绝(不联网,也不静默丢图)', async () => {
+  let failure;
+  try {
+    await word.writeDocx({ html: '<p>正文</p><img src="https://example.com/x.jpg" alt="图 1">' });
+  } catch (err) {
+    failure = err;
+  }
+  if (!failure) throw new Error('远程图片应该直接报错,而不是悄悄丢掉');
+  if (failure.code !== 'IMAGE_REMOTE') throw new Error('错误码不对: ' + failure.code);
+  if (!failure.message.includes('不联网')) throw new Error('报错没说明不联网: ' + failure.message);
+  // 无 src 时仍按 alt 文字处理,不会为了图片去联网或读盘
+  const buf = await word.writeDocx({ html: '<p>正文</p><img alt="图 1">' });
   const back = await word.readDocx(buf);
-  if (!back.content.includes('正文')) throw new Error('正文丢失');
-  if (!back.content.includes('图 1')) throw new Error('alt 文本未保留');
+  if (!back.content.includes('正文') || !back.content.includes('图 1')) throw new Error('alt 文本没保留: ' + back.content);
   const xml = new (await import('pizzip')).default(buf).file('word/document.xml').asText();
-  if (xml.includes('graphic') || xml.includes('pic:pic')) throw new Error('docx 里出现了图片部件');
-  return `图片被跳过,alt 保留(${buf.length} 字节)`;
+  if (xml.includes('pic:pic')) throw new Error('docx 里出现了图片部件');
+  return `远程被拒(${failure.code}),无 src 退回 alt`;
 });
 
 await t('docx-writer: 标题 / 内联 / 列表 / 表格 / 引用 / 代码 / 链接 / 分隔线', async () => {

@@ -1,6 +1,7 @@
 // office_query 的计算层单测:值归一化、条件算子、分组聚合、排序截断、画像、错误分支。
 // 这一层是纯函数(不碰 IO),所以直接喂矩阵即可,不需要造文件。
-import { querySheet, toNumber, toDay, valueKey, evalCondition, buildTable, FILTER_OPS, AGG_FNS } from '../lib/core/query.js';
+import { querySheet, queryTable, toNumber, toDay, valueKey, evalCondition, buildTable, FILTER_OPS, AGG_FNS } from '../lib/core/query.js';
+import { joinTables, planJoins } from '../lib/core/join.js';
 
 const results = [];
 async function t(name, fn) {
@@ -414,6 +415,149 @@ await t('边界:列数超过上限时只算前 N 列并说明', () => {
   const out = querySheet(sheet, {});
   assert(rows(out.text).length - 1 === 260, '画像应覆盖全部列: ' + (rows(out.text).length - 1));
   return '260 列画像不崩';
+});
+
+// ---------------------------------------------------------------------------
+// 多表 join
+// ---------------------------------------------------------------------------
+const tableOf = (columns, rows) => ({ name: 'T', columns, rows });
+
+await t('join: 内/左/右/全 四种连接语义', () => {
+  const left = tableOf(['编号', '金额'], [['A', 10], ['B', 20], ['D', 40]]);
+  const right = tableOf(['编号', '名称'], [['A', '甲'], ['B', '乙'], ['C', '丙']]);
+  const run = (type) => {
+    const spec = planJoins({ on: '编号', type }, 'x.xlsx')[0];
+    return joinTables(left, right, spec);
+  };
+  const inner = run('inner');
+  assert(inner.rows.length === 2 && inner.rows[0].join() === 'A,10,甲', '内连接不对: ' + JSON.stringify(inner.rows));
+  assert(inner.unmatchedLeft === 1, '内连接没统计未匹配的左表行');
+  const leftJoin = run('left');
+  assert(leftJoin.rows.length === 3 && leftJoin.rows[2][2] === null, '左连接没补空: ' + JSON.stringify(leftJoin.rows[2]));
+  const rightJoin = run('right');
+  // 右表的孤儿行:非键列补空,同名的连接键从左表那一列回填过来
+  assert(rightJoin.rows.length === 3 && rightJoin.rows[2].join() === 'C,,丙', '右连接不对: ' + JSON.stringify(rightJoin.rows[2]));
+  const full = run('full');
+  assert(full.rows.length === 4, '全连接应保留两边的孤儿行: ' + full.rows.length);
+  return '内 2 / 左 3 / 右 3 / 全 4 行';
+});
+
+await t('join: 多列键、空键不匹配、重名列加后缀', () => {
+  const left = tableOf(['年', '月', '值'], [[2026, 1, 'x'], [2026, 2, 'y'], ['', 3, 'z']]);
+  const right = tableOf(['年', '月', '值'], [[2026, 1, 'p'], [2026, 2, 'q'], ['', 3, 'r']]);
+  const spec = planJoins({ on: ['年', '月'], type: 'inner' }, 'x')[0];
+  const out = joinTables(left, right, spec);
+  // 同名的连接键只保留一份,非键的重名列才加后缀
+  assert(out.columns.join() === '年,月,值,值_2', '列名不对: ' + out.columns.join());
+  assert(out.rows.length === 2, '多列键连接结果不对: ' + JSON.stringify(out.rows));
+  // 空键按 SQL 习惯不参与匹配,所以那条 ('',3) 不会被连上
+  assert(out.unmatchedLeft === 1, '空键不该参与连接: ' + out.unmatchedLeft);
+  const leftJoin = joinTables(left, right, planJoins({ on: ['年', '月'], type: 'left' }, 'x')[0]);
+  assert(leftJoin.rows.length === 3 && leftJoin.rows[2][3] === null, '空键行在左连接里应补空: ' + JSON.stringify(leftJoin.rows[2]));
+  return '值/值_2，空键行不匹配';
+});
+
+await t('join: 数字与文本形式的键能对上，参数错误有明确报错', () => {
+  const left = tableOf(['编号', '金额'], [[1, 10], ['001', 20]]);
+  const right = tableOf(['编号', '名称'], [['1', '甲'], [1, '乙']]);
+  const out = joinTables(left, right, planJoins({ on: '编号' }, 'x')[0]);
+  // 1 / "1" / "001" 归一化后是同一个键,所以两行左表 × 两行右表 = 4 行
+  assert(out.rows.length === 4, '1 与 "1" 应视为同一个键: ' + JSON.stringify(out.rows));
+  /** @type {Array<[object, string, string]>} */
+  const bad = [
+    [{ on: '编号', type: 'outer' }, 'x.xlsx', 'join 的 type'],
+    [{}, 'x.xlsx', 'join 需要 on'],
+    [{ on: '编号' }, '', 'join 需要 path'],
+  ];
+  for (const [spec, main, needle] of bad) {
+    let message = '';
+    try { planJoins(spec, main); } catch (err) { message = err.message; }
+    assert(message.includes(needle), `${JSON.stringify(spec)} 的报错不对: ${message}`);
+  }
+  let notObject = '';
+  try { planJoins('not-an-object', 'x.xlsx'); } catch (err) { notObject = err.message; }
+  assert(notObject.includes('join 需为对象'), 'join 传字符串的报错不对: ' + notObject);
+  let message = '';
+  try { joinTables(left, right, planJoins({ on: '不存在' }, 'x')[0]); } catch (err) { message = err.message; }
+  assert(message.includes('找不到列「不存在」'), '未知列的报错不对: ' + message);
+  return '1 与 "1" 同键，4 类参数错误都有提示';
+});
+
+// ---------------------------------------------------------------------------
+// 透视
+// ---------------------------------------------------------------------------
+const PIVOT_MATRIX = [
+  ['地区', '产品', '金额'],
+  ['华东', '甲', 10], ['华东', '乙', 20], ['华东', '乙', 5],
+  ['华南', '甲', 7], ['华南', '乙', 3],
+];
+
+await t('pivot: 行 × 列 × 指标 + 合计', () => {
+  const out = querySheet({ name: 's', matrix: PIVOT_MATRIX }, {
+    pivot: { rows: ['地区'], columns: '产品', values: [{ col: '金额', fn: 'sum' }], totals: true },
+  });
+  const body = rows(out.text);
+  assert(body[0].join() === '地区,甲,乙,合计', '表头不对: ' + body[0].join());
+  assert(body[1].join() === '华东,10,25,35', '华东行不对: ' + body[1].join());
+  assert(body[2].join() === '华南,7,3,10', '华南行不对: ' + body[2].join());
+  assert(body[3].join() === '合计,17,28,45', '合计行不对: ' + body[3].join());
+  assert(out.meta.kind === 'pivot' && out.meta.groups === 3, 'meta 不对: ' + JSON.stringify(out.meta));
+  return body.map((r) => r.join('/')).join(' ');
+});
+
+await t('pivot: 缺格子留空、多指标表头带指标名、orderBy/where 生效', () => {
+  const sheet = { name: 's', matrix: [['地区', '产品', '金额'], ['华东', '甲', 10], ['华南', '乙', 5], ['华南', '乙', 5]] };
+  const out = querySheet(sheet, { pivot: { rows: ['地区'], columns: '产品', values: [{ col: '金额', fn: 'sum' }] } });
+  const body = rows(out.text);
+  assert(body[1].join() === '华东,10,', '缺的格子应留空: ' + body[1].join());
+  const multi = querySheet(PIVOT_MATRIX && { name: 's', matrix: PIVOT_MATRIX }, {
+    pivot: { rows: ['地区'], columns: '产品', values: [{ col: '金额', fn: 'sum' }, { col: '金额', fn: 'count' }] },
+  });
+  assert(rows(multi.text)[0].join() === '地区,sum(金额)·甲,count(金额)·甲,sum(金额)·乙,count(金额)·乙', '多指标表头不对: ' + rows(multi.text)[0].join());
+  const filtered = querySheet({ name: 's', matrix: PIVOT_MATRIX }, {
+    where: [{ col: '产品', op: 'eq', value: '乙' }],
+    pivot: { rows: ['地区'], columns: '产品', values: [{ col: '金额', fn: 'sum' }] },
+    orderBy: [{ col: '乙', dir: 'desc' }],
+  });
+  const filteredBody = rows(filtered.text);
+  assert(filteredBody[1].join() === '华东,25' && filteredBody[2].join() === '华南,3', 'where + orderBy 没生效: ' + filteredBody.slice(1).map((r) => r.join()).join(' '));
+  return '缺格留空、多指标、筛选排序都对';
+});
+
+await t('pivot: 参数与规模都有明确报错', () => {
+  /** @type {Array<[object, string]>} */
+  const bad = [
+    [{ pivot: { columns: '产品', values: [{ col: '金额', fn: 'sum' }] } }, 'pivot 需要 rows'],
+    [{ pivot: { rows: ['地区'], values: [{ col: '金额', fn: 'sum' }] } }, 'pivot 需要 columns'],
+    [{ pivot: { rows: ['地区'], columns: '产品' } }, 'pivot 需要 values'],
+    [{ pivot: { rows: ['地区'], columns: '产品', values: [{ col: '金额', fn: 'nope' }] } }, '不支持的聚合函数'],
+    [{ pivot: { rows: ['地区'], columns: '不存在', values: [{ col: '金额', fn: 'sum' }] } }, '找不到列'],
+    [{ pivot: 'x' }, 'pivot 需为对象'],
+  ];
+  for (const [spec, needle] of bad) {
+    let message = '';
+    try { queryTable({ columns: ['地区', '产品', '金额'], rows: PIVOT_MATRIX.slice(1), name: 's' }, spec); } catch (err) { message = err.message; }
+    assert(message.includes(needle), `${JSON.stringify(spec)} 的报错不对: ${message}`);
+  }
+  const wide = { name: 's', matrix: [['地区', '产品', '金额'], ...Array.from({ length: 61 }, (_, i) => ['华东', `P${i}`, i])] };
+  let message = '';
+  try { querySheet(wide, { pivot: { rows: ['地区'], columns: '产品', values: [{ col: '金额', fn: 'sum' }] } }); } catch (err) { message = err.message; }
+  assert(message.includes('列维度'), '列维度过多没提示: ' + message);
+  return `${bad.length} 类参数错误 + 列维度上限`;
+});
+
+await t('queryTable: 连接后的表能继续筛选/分组', () => {
+  const left = tableOf(['编号', '金额'], [['A', 10], ['B', 20], ['D', 40]]);
+  const right = tableOf(['编号', '地区'], [['A', '华东'], ['B', '华南']]);
+  const joined = joinTables(left, right, planJoins({ on: '编号', type: 'left' }, 'x')[0]);
+  const table = { name: 'S', columns: joined.columns, rows: joined.rows };
+  const out = queryTable(table, { groupBy: ['地区'], aggregate: [{ col: '金额', fn: 'sum' }], orderBy: [{ col: 'sum(金额)', dir: 'desc' }] });
+  const body = rows(out.text);
+  // 左连接里没配上的 D 行地区为空,自成一组的 sum 是 40
+  const got = body.slice(1).map((r) => r.join());
+  assert(got.join(' ') === ',40 华南,20 华东,10', '连接后分组不对: ' + got.join(' '));
+  assert(out.meta.matchedRows === 3, 'matchedRows 应包含补空行');
+  return '左连接 + 分组';
 });
 
 await t('安全: 超长畸形数字串必须线性失败(不变 O(n²))', () => {

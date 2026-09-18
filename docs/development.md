@@ -5,11 +5,11 @@
 ## 本地开发
 
 ```sh
-npm test           # 四个测试脚本：核心库 74 · 跨平台层 16 · 计算层 39 · 插件适配层 52，共 181 项
+npm test           # 四个测试脚本：核心库 114 · 跨平台层 16 · 计算层 39 · 插件适配层 73，共 242 项
 npm run coverage   # 同上并统计覆盖率，写出 coverage/lcov.info
 ```
 
-纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 94.3% / 分支 77.4% / 函数 95.6%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
+纯 Node 脚本，不需要测试框架。覆盖率（c8）：**语句 94.6% / 分支 79.0% / 函数 96.1%**；未覆盖的主要是 `legacy-external.js` 的 Word COM / LibreOffice 分支与 `converters.js` 的纯 JS 回退 —— 它们只在没有 textutil / LibreOffice 的机器上才会走到。
 
 改工具描述时注意：**面向模型的文本里不能出现 `{{变量}}` 字面量**（原因见[设计说明](design.md)）。`test/plugin-smoke.mjs` 会递归扫描全部工具 schema 拦住它。
 
@@ -23,7 +23,7 @@ npm run coverage   # 同上并统计覆盖率，写出 coverage/lcov.info
 export SONAR_TOKEN=<token> && sonar-scanner   # 会读取 coverage/lcov.info
 ```
 
-当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点，整体覆盖率 86.7%、新代码覆盖率 93.9%（门槛 80%），质量门通过。认知复杂度按 SonarQube 推荐阈值控制在 15 以内。
+当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点，整体覆盖率 90.6%、新代码覆盖率 91.0%（门槛 80%），质量门通过。认知复杂度按 SonarQube 推荐阈值控制在 15 以内。
 
 ## 发布到 npm（维护者）
 

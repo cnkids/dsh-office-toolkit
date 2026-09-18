@@ -31,8 +31,14 @@
 
 - **纯 JS，开箱可用** —— 不装 Office / LibreOffice 就能读写 `.docx` `.xlsx` `.xls` `.csv`，Windows 上同样零依赖。
 - **读写改一条龙** —— 新建文档、新建工作簿、编辑已有工作簿（样式 / 合并 / 冻结 / 筛选 / 图片 / 图表）、`{{变量}}` 模板套打、跨格式转换。
-- **7 个工具自动注册** —— 见[工具](#工具)；描述里前置了文件类型关键字，智能体一次就能选对。
-- **大表直接算，不用先搬数据** —— `office_query` 在文件内做筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行也只返回结论；不给条件时返回表结构画像。
+- **8 个工具自动注册** —— 见[工具](#工具)；描述里前置了文件类型关键字，智能体一次就能选对。
+- **大表直接算，不用先搬数据** —— `office_query` 在文件内做筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行也只返回结论；不给条件时返回表结构画像。跨文件的**多表连接**（`join`：inner/left/right/full，列名相同或左右对应）与**透视表**（`pivot`：行 × 列 × 指标，可带合计）也在这里做，不用写脚本。
+- **排版可指定** —— `style` 参数设整篇字体 / 字号 / 行距 / 首行缩进 / 对齐（公文体例：仿宋_GB2312 三号、行距固定值 28.8 磅、首行缩进 2 字符），标题用 `style.headings`，表格用 `style.table`（三线表 / 表头底纹 / **按内容自动分配列宽**）；html 内联样式也认 `font-family`（含中文 `eastAsia`）/ `line-height` / `text-indent` / `margin`，`<body>`、`<div>` 上的样式会被继承。
+- **改之前能先看、改之后能留底** —— `office_edit_docx` 传 `dryRun: true` 只报改动不写盘，传 `outputPath` 另存为新文件而原文件不变。
+- **改已有文档能分段、分角色** —— `set_style` 的 `scope` 支持 `body`（正文，不含标题）/ `headings` / `table` / `all`，可叠加段落区间；例如「只把正文改成单倍行距」一句就够。表格另有 `set_table`（框线 / 底纹 / 列宽 / 单元格内边距 / 垂直对齐 / 行高 / 表头跨页重复 / 禁止断行）、增删行列、合并与取消合并，以及 `delete_table` 整表删除（含删空后的 0 行残留）。
+- **多级自动编号** —— `set_numbering` 把标题按样式挂上 Word 多级编号（`1.` / `1.1` / `1.1.1`），正文列表挂到当前标题层级之下；支持 `exclude`（某些标题不参与）与 `startFrom`（从哪级起算、起始数字）；**幂等**，重复调用原地替换不堆积定义。编号由 Word 维护，改标题会自动重排，不用手写「一、」「1.1」。
+- **页眉页脚、页码、目录** —— `header` / `footer`（页码是 Word 域，如「第 X 页 共 Y 页」或公文式「— 1 —」）、`toc` 插入目录域；插件已设 `updateFields`，Word 打开即按当前排版刷新。
+- **图片与编号都落到实处** —— `<img>` 指向本地文件或 `data:` URL 就嵌成真图片（PNG / JPEG / GIF / BMP，按魔数读尺寸、按正文宽等比缩放；不联网，远程地址与超 8 MB 直接报错）；读 Word 时把自动编号展开成文字（`一、` / `（一）` / `1.1`），行文规则比对看得到层级。
 - **公式与日期是真的** —— `=` 开头写公式，`date:2026-09-09` 写日期，日期回读不受时区影响。
 - **排版格式可读** —— `.docx` 传 `withFormatting: true` 即返回每段的字体 / 字号 / 行距 / 首行缩进 / 对齐与页面页边距（含 `basedOn` 继承链、隐式默认样式与主题字体），并给出格式分布和偏离主流的段落，用于比对行文规则。见[用法与参数](docs/usage.md#读取排版格式行文规则比对)。
 - **默认安全** —— 写入经 DSH 沙箱围栏（含 realpath 校验），文本来源中和公式注入，解析全走线性扫描（无 ReDoS），不联网、不常驻后台、依赖树无安装脚本。见[安全说明](docs/security.md)。
@@ -43,11 +49,12 @@
 
 | 工具 | 作用 |
 | --- | --- |
-| `office_read` | 读取 `.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv`（Excel 以 TSV 返回；Word 长文可 `offset` 分段续读、`outline` 取标题大纲；`.docx` 可选返回排版格式报告） |
-| `office_query` | 在表格文件内计算：条件筛选、分组、求和/均值/计数/去重、排序、表结构画像 —— 只返回结论 |
-| `office_write_docx` | 新建文档（html / markdown / text） |
+| `office_read` | 读取 `.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv`（Excel 以 TSV 返回、可切换公式本体 / 计算值；Word 长文可 `offset` 分段续读、`outline` 取标题大纲，自动编号展开成文字；`.docx` 可选返回排版格式报告） |
+| `office_query` | 在表格文件内计算：条件筛选、分组、求和/均值/计数/去重、排序、表结构画像、多表连接、透视表 —— 只返回结论 |
+| `office_write_docx` | 新建文档（html / markdown / text，可嵌本地图片） |
+| `office_edit_docx` | **改已有 .docx 正文**：查找替换（跨 run）/ 整段改写 / 插入段落（可套标题样式）/ 删除段落；其余部件原样保留 |
 | `office_write_xlsx` | 新建工作簿（多表、表头、公式、日期、样式） |
-| `office_edit_xlsx` | 编辑已有工作簿（单元格 / 样式 / 合并 / 行列 / 冻结 / 筛选 / 图片 / 图表） |
+| `office_edit_xlsx` | 编辑已有工作簿（单元格 / 样式 / 合并 / 行列 / 冻结 / 筛选 / 图片 / 图表 / 条件格式 / 数据验证） |
 | `office_fill_docx_template` | `{{变量}}` 模板填充（合同、通知、批量套打） |
 | `office_convert` | 格式互转（Word 家族 / 表格家族内部、`.xls` 导出、`.pdf` 输出） |
 
@@ -154,6 +161,14 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **几百页的 Word 怎么读？** 一次 `office_read` 只返回 `maxChars`（默认 90000 字符）那么长，返回里会写明总字符数和「继续读」该传的 `offset`，下一次带上它就从断点接着读，不必从头重来；也可以先传 `outline: true` 拿标题大纲（级别 / 字符偏移 / 标题），直接跳到某一章。
 
+**改了 Word 文档后格式全没了？** 别用 `office_write_docx` 覆盖原文件——它是整篇重建。改已有文档用 `office_edit_docx`：按段落序号（或整段原文）定位，只改那几段，段落样式、表格、图片、页眉页脚、批注都保留。
+
+**怎么一次生成多行明细的合同？** `office_fill_docx_template` 支持模板循环：模板里写两个花括号加 `#明细数组名` 包住那一行，再以两个花括号加斜杠收尾，传数组进去就会按行展开（可嵌套，空数组时整块消失）；条件用 `#标记` / `^标记`。模板文件里的双花括号是 docxtemplater 语法，和 DSH 的提示词变量无关。
+
+**怎么只把正文改成单倍行距？** `office_edit_docx` 传 `{ "op": "set_style", "scope": "body", "lineSpacingMultiple": 1 }` —— `scope: "body"` 只命中非标题段落，标题与表格文字不动；要动标题就换 `"headings"`，只动表格内文字用 `"table"`。
+
+**怎么排出公文体例？** `office_write_docx` 传 `style`：`{"font":"仿宋_GB2312","sizePt":16,"lineSpacingPt":28.8,"firstLineIndentChars":2,"align":"both","headings":{"font":"黑体","sizePt":16}}`（三号仿宋、行距固定值 28.8 磅、首行缩进 2 字符）。改已有文档用 `office_edit_docx` 的 `set_style`，配 `scope: "all"` 一次改全篇。
+
 **转 PDF 报错？** `.pdf` 输出依赖本机 LibreOffice 或 Microsoft Word，纯 JS 不提供 PDF 渲染；写出 `.doc` / `.odt` 同理。各格式保真度见[平台支持](docs/platform.md)。
 
 **智能体还是用了通用 `read`？** 见上一节，补一条用户级指令即可稳定命中。
@@ -173,6 +188,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.28** | ① 新增 `office_edit_docx`：就地改已有 Word（查找替换 / 整段改写 / 改排版 / 多级编号 / 插入删除段落 / 表格样式与增删行列 / 合并单元格），只重写正文部件。② 排版：`office_write_docx` 的 `style` 设字体·字号·行距·首行缩进·对齐·段前后（标题 `headings`、表格 `table` 含按内容自动列宽与单元格内边距），html 内联样式补齐 `font-family`（含中文 `eastAsia`）/`line-height`/`text-indent`/`margin` 并支持容器继承。③ `set_style` 按角色选段落（正文 / 标题 / 表格内 / 全部 + 区间）。④ `set_numbering` 多级自动编号（标题挂样式链接 + 正文列表挂当前标题下一级，含公文体例预置）。⑤ `office_read` 读取时把 Word 自动编号展开成文字（`一、`/`（一）`/`1.1`）。⑥ `office_write_docx` / `office_convert` 支持 `<img>` 嵌入本地图片（PNG/JPEG/GIF/BMP，按正文宽等比缩放，不联网）。⑦ 表格 `set_table` 增 `repeatHeader`/`cellVerticalAlign`/`rowHeightPt`/`cantSplit` 与 `unmerge_table_cells`。⑧ `office_query` 支持多表 `join`（inner/left/right/full）与 `pivot` 透视表（含合计）。⑨ `office_edit_xlsx` 增 `conditional_format`（9 种规则）与 `data_validation`（下拉 / 区间 / 公式）。⑩ `office_read` 可按 `formulas` 切换公式本体与计算值；修 `.xlsb` / `.ods` 的家族判定（此前分别被当成损坏文件与 Word 文档） |
 | **0.3.27** | Word 长文档可分段读：`offset` 续读（不再每次从头开始）+ `outline` 标题大纲跳读；逐段拼回与全文逐字节一致 |
 | **0.3.26** | 修 `office_fill_docx_template` 描述里的字面量占位符导致 DSH 提示词组装报 `malformed prompt variable reference`：面向模型的文本一律不再出现双花括号变量写法，并加测试门禁 |
 | **0.3.25** | 新增 `office_query`：在表格文件内筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行只回结论；不给条件时返回表结构画像。数值与日期按真实写法识别，算不了的需求（跨文件 join、透视、建模）照常写脚本 |
