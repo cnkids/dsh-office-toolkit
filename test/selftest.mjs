@@ -2,7 +2,7 @@
 // Usage: node test/selftest.mjs   (outputs into test/out/)
 import { mkdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as office from '../lib/core/office.js';
 import * as word from '../lib/core/word.js';
 import * as excel from '../lib/core/excel.js';
@@ -21,10 +21,10 @@ import { normalizeStyleSpec, normalizeTableSpec, autoColumnPercents, lengthToTwi
 import { scanTables } from '../lib/core/docx-table.js';
 import { headingStyleIds, levelTextAt, NUMBERING_PRESETS } from '../lib/core/docx-numbering.js';
 import { formatCounter } from '../lib/core/docx-numbering-read.js';
-import { joinPages, looksLikePdf, normalizePdfText, readPdfText } from '../lib/core/pdf.js';
+import { joinPages, looksLikePdf, normalizePdfText, pdfjsAssets, readPdfText } from '../lib/core/pdf.js';
 import { pdfFixture } from './pdf-fixture.mjs';
 import { fitImageSize, loadImage, probeImage } from '../lib/core/image.js';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -701,6 +701,51 @@ await t('pdf: 纯 JS 后端抽文本(页标记 / 分页 / 归一化)', async () 
     throw new Error('PDF 魔数判断不对');
   }
   return `${r.pages} 页 / ${r.text.length} 字，页标记正确`;
+});
+
+await t('pdf: 内置 pdfjs 的资源地址形态(Windows 上也能起 worker)', async () => {
+  const assets = pdfjsAssets();
+  // worker 走 `await import(workerSrc)`:Node 只认 file/data/node,Windows 的 C:\… 裸路径会直接失败
+  if (new URL(assets.workerUrl).protocol !== 'file:') {
+    throw new Error('worker 必须是 file:// URL，否则 Windows 上 fake worker 起不来: ' + assets.workerUrl);
+  }
+  if (!existsSync(new URL(assets.workerUrl))) throw new Error('worker 文件不存在: ' + assets.workerUrl);
+  // cmaps / standard_fonts 走 Node 的 fs.readFile(路径):必须是文件系统路径,file:// 会被当文件名
+  for (const [name, value] of [['cMapUrl', assets.cMapUrl], ['standardFontDataUrl', assets.standardFontDataUrl]]) {
+    if (value.startsWith('file://')) throw new Error(`${name} 必须是文件系统路径（pdfjs 用 fs.readFile 读）: ${value}`);
+    if (!existsSync(value.slice(0, -1))) throw new Error(`${name} 指向的目录不存在: ${value}`);
+  }
+  return 'worker=file://（跨平台），cmaps/standard_fonts=fs 路径';
+});
+
+await t('pdf: 内置 pdfjs 不依赖 Node 22+ 新 API(Node 20 也能读)', async () => {
+  const assets = pdfjsAssets();
+  // 用一个全新实例(查询串绕过 ESM 缓存)模拟 Node 20:Promise.withResolvers / Promise.try 都不存在
+  const url = `${pathToFileURL(join(process.cwd(), 'vendor', 'pdfjs', 'pdf.min.mjs')).href}?node20-sim`;
+  const saved = { withResolvers: Promise.withResolvers, promiseTry: Promise.try };
+  delete Promise.withResolvers;
+  delete Promise.try;
+  try {
+    const pdfjs = await import(url);
+    pdfjs.GlobalWorkerOptions.workerSrc = assets.workerUrl;
+    const doc = await pdfjs.getDocument({
+      data: new Uint8Array(pdfBytes),
+      isEvalSupported: false,
+      useSystemFonts: false,
+      disableFontFace: true,
+      cMapUrl: assets.cMapUrl,
+      cMapPacked: true,
+      standardFontDataUrl: assets.standardFontDataUrl,
+      verbosity: 0,
+    }).promise;
+    const content = await (await doc.getPage(1)).getTextContent();
+    const text = content.items.map((item) => item.str).join('');
+    if (!text.includes('Hello PDF')) throw new Error('缺 Promise 新 API 时抽不到文本: ' + text);
+  } finally {
+    if (saved.withResolvers) Promise.withResolvers = saved.withResolvers;
+    if (saved.promiseTry) Promise.try = saved.promiseTry;
+  }
+  return '删掉 Promise.withResolvers / Promise.try 仍能抽文本（内置构建自带 polyfill）';
 });
 
 await t('pdf: 本机后端链(有系统能力就用,并给出后端名)', async () => {

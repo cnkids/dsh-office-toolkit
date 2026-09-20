@@ -27,15 +27,20 @@ export SONAR_TOKEN=<token> && sonar-scanner   # 会读取 coverage/lcov.info
 
 ## 随包第三方代码（`vendor/`）
 
-`vendor/pdfjs/` 是 pdfjs 的官方精简构建（`pdf.min.mjs`、`pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、`LICENSE`），供「没有 pdftotext、也不是 macOS」的机器兜底抽 PDF 文本。升级步骤：
+`vendor/pdfjs/` 是 pdfjs 的官方精简构建（`pdf.min.mjs`、`pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、`LICENSE`），供「没有 pdftotext、也不是 macOS」的机器兜底抽 PDF 文本（Windows 上全靠它）。
+
+**版本必须挑 `engines` 与插件一致的那条线**：当前锁 **4.10.38**（`engines: node >= 20`，自带 `Promise.withResolvers` / `Promise.try` 的 polyfill）。6.x 声明 `node >= 22.13` 且没有 polyfill，装到 Node 20/22 用户机器上会直接抛 `Promise.withResolvers is not a function`。升级步骤：
 
 ```sh
-npm pack pdfjs-dist            # 或 npm i --no-save pdfjs-dist
-tar -xzf pdfjs-dist-*.tgz
-cp package/legacy/build/pdf.min.mjs package/legacy/build/pdf.worker.min.mjs vendor/pdfjs/
-cp -R package/cmaps package/standard_fonts package/LICENSE vendor/pdfjs/
-node test/selftest.mjs && npm run verify:offline   # 抽文本与完整性两道门禁
+npm i --no-save pdfjs-dist@4.10.38     # 换版本前先核对 npm view pdfjs-dist@<v> engines
+cp node_modules/pdfjs-dist/legacy/build/pdf.min.mjs node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs vendor/pdfjs/
+cp -R node_modules/pdfjs-dist/cmaps node_modules/pdfjs-dist/standard_fonts node_modules/pdfjs-dist/LICENSE vendor/pdfjs/
+node test/selftest.mjs && npm run verify:offline   # 抽文本、跨平台地址形态、Node 20 模拟、完整性四道门禁
 ```
+
+两个易踩的点：
+- `workerSrc` 必须给 **`file://` URL**（pdfjs 用 `await import(workerSrc)` 起 fake worker，Node 只认 file/data/node 三种 scheme）；POSIX 绝对路径碰巧能过，Windows 的 `C:\…` 会失败。
+- `cMapUrl` / `standardFontDataUrl` 必须给 **文件系统路径**（Node 侧走 `fs.readFile`），写成 `file://` 会 ENOENT。
 
 `verify:offline` 会检查 `vendor/pdfjs` 的关键文件是否齐全（缺一个就算离线不可用）。
 
