@@ -134,7 +134,20 @@ checkPackage(root, '本包');
 const packages = collectPackages(root);
 for (const pkgDir of packages) checkPackage(pkgDir, relative(root, pkgDir));
 
+// 随包携带的第三方代码(pdfjs)必须齐全:PDF 读取在没有 poppler、没有 macOS PDFKit
+// 的机器上就是靠它,缺一个文件就等于「离线不可用」。
+const VENDOR_FILES = [
+  'vendor/pdfjs/pdf.min.mjs',
+  'vendor/pdfjs/pdf.worker.min.mjs',
+  'vendor/pdfjs/LICENSE',
+  'vendor/pdfjs/cmaps/Adobe-GB1-UCS2.bcmap',
+  'vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf',
+];
+const missingVendor = VENDOR_FILES.filter((file) => !existsSync(join(root, file)));
+if (missingVendor.length) problems.push(...missingVendor.map((file) => `随包文件缺失: ${file}`));
+
 console.log(`顶层依赖检查: ${checked} 处,随包依赖包: ${packages.length} 个`);
+console.log(`随包第三方代码: vendor/pdfjs（${missingVendor.length ? '不完整' : '完整'}）`);
 if (notes.length) console.log(`可选依赖提示: ${notes.length} 条`);
 if (scriptHits.length) {
   console.log('\n✗ 依赖树里存在安装脚本(会让 dsh plugin add 被 pnpm 打断):');

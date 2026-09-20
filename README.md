@@ -29,7 +29,7 @@
 
 ## 特性
 
-- **纯 JS，开箱可用** —— 不装 Office / LibreOffice 就能读写 `.docx` `.xlsx` `.xls` `.csv`，Windows 上同样零依赖。
+- **纯 JS，开箱可用** —— 不装 Office / LibreOffice 就能读写 `.docx` `.xlsx` `.xls` `.csv`，也能读 `.pdf` 文本（本机有 `pdftotext` / macOS PDFKit 就用它，否则用随包携带的 pdfjs），Windows 上同样零依赖。
 - **读写改一条龙** —— 新建文档、新建工作簿、编辑已有工作簿（样式 / 合并 / 冻结 / 筛选 / 图片 / 图表）、`{{变量}}` 模板套打、跨格式转换。
 - **8 个工具自动注册** —— 见[工具](#工具)；描述里前置了文件类型关键字，智能体一次就能选对。
 - **大表直接算，不用先搬数据** —— `office_query` 在文件内做筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行也只返回结论；不给条件时返回表结构画像。跨文件的**多表连接**（`join`：inner/left/right/full，列名相同或左右对应）与**透视表**（`pivot`：行 × 列 × 指标，可带合计）也在这里做，不用写脚本。
@@ -49,7 +49,7 @@
 
 | 工具 | 作用 |
 | --- | --- |
-| `office_read` | 读取 `.docx .doc .rtf .odt .xlsx .xls .xlsb .ods .csv .tsv`（Excel 以 TSV 返回、可切换公式本体 / 计算值；Word 长文可 `offset` 分段续读、`outline` 取标题大纲，自动编号展开成文字；`.docx` 可选返回排版格式报告） |
+| `office_read` | 读取 `.docx .doc .rtf .odt .pdf .xlsx .xls .xlsb .ods .csv .tsv`（Excel 以 TSV 返回、可切换公式本体 / 计算值；Word / PDF 长文可 `offset` 分段续读、`outline` 取标题大纲或页清单，Word 自动编号展开成文字；`.docx` 可选返回排版格式报告） |
 | `office_query` | 在表格文件内计算：条件筛选、分组、求和/均值/计数/去重、排序、表结构画像、多表连接、透视表 —— 只返回结论 |
 | `office_write_docx` | 新建文档（html / markdown / text，可嵌本地图片） |
 | `office_edit_docx` | **改已有 .docx 正文**：查找替换（跨 run）/ 整段改写 / 插入段落（可套标题样式）/ 删除段落；其余部件原样保留 |
@@ -188,6 +188,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.29** | `office_read` 支持 `.pdf`：只抽文本层（页数 + 文本，多页带 `--- 第 N 页 ---` 标记），`offset` / `maxChars` 分段读、`outline` 给页清单、`format: "html"` 也是文本重建；后端链为 `pdftotext`（poppler）→ macOS 自带 PDFKit → 随包携带的 pdfjs，任一可用即可读，缺工具不会读不出来。图片型（扫描件）没有文本层，会明确提示需要 OCR。随包新增 `vendor/pdfjs`（Apache-2.0，仅文本抽取，不渲染、不联网、`isEvalSupported: false`），离线包依旧零外部依赖、零安装脚本 |
 | **0.3.28** | ① 新增 `office_edit_docx`：就地改已有 Word（查找替换 / 整段改写 / 改排版 / 多级编号 / 插入删除段落 / 表格样式与增删行列 / 合并单元格），只重写正文部件。② 排版：`office_write_docx` 的 `style` 设字体·字号·行距·首行缩进·对齐·段前后（标题 `headings`、表格 `table` 含按内容自动列宽与单元格内边距），html 内联样式补齐 `font-family`（含中文 `eastAsia`）/`line-height`/`text-indent`/`margin` 并支持容器继承。③ `set_style` 按角色选段落（正文 / 标题 / 表格内 / 全部 + 区间）。④ `set_numbering` 多级自动编号（标题挂样式链接 + 正文列表挂当前标题下一级，含公文体例预置）。⑤ `office_read` 读取时把 Word 自动编号展开成文字（`一、`/`（一）`/`1.1`）。⑥ `office_write_docx` / `office_convert` 支持 `<img>` 嵌入本地图片（PNG/JPEG/GIF/BMP，按正文宽等比缩放，不联网）。⑦ 表格 `set_table` 增 `repeatHeader`/`cellVerticalAlign`/`rowHeightPt`/`cantSplit` 与 `unmerge_table_cells`。⑧ `office_query` 支持多表 `join`（inner/left/right/full）与 `pivot` 透视表（含合计）。⑨ `office_edit_xlsx` 增 `conditional_format`（9 种规则）与 `data_validation`（下拉 / 区间 / 公式）。⑩ `office_read` 可按 `formulas` 切换公式本体与计算值；修 `.xlsb` / `.ods` 的家族判定（此前分别被当成损坏文件与 Word 文档） |
 | **0.3.27** | Word 长文档可分段读：`offset` 续读（不再每次从头开始）+ `outline` 标题大纲跳读；逐段拼回与全文逐字节一致 |
 | **0.3.26** | 修 `office_fill_docx_template` 描述里的字面量占位符导致 DSH 提示词组装报 `malformed prompt variable reference`：面向模型的文本一律不再出现双花括号变量写法，并加测试门禁 |

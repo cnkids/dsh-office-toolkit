@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { deflateSync } from 'node:zlib';
+import { pdfFixture } from './pdf-fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // .doc 写出依赖外部转换器(macOS textutil / LibreOffice / Word);
@@ -177,6 +178,17 @@ const r5b = await registered.get('office_query').execute({
 check('office_query(分组聚合)', r5b.content.includes('键盘') && r5b.content.includes('数量合计'), r5b.content.split('\n')[0]);
 const r5c = await registered.get('office_query').execute({ path: xlsx, where: [{ col: '数量', op: 'gt', value: 10 }] }, exec);
 check('office_query(筛选)', r5c.content.includes('命中 1 行'), r5c.content.split('\n').find((l) => l.startsWith('###')));
+
+// PDF:读取只抽文本层;office_query 只算表格,要给出明确拒绝
+const pdfPath = join(outDir, 'smoke.pdf');
+// 夹具用标准 14 号 Helvetica,只能写 ASCII(中文要嵌入带 ToUnicode 的字体,见 docs/usage.md)
+await writeFile(pdfPath, pdfFixture([['Smoke PDF page one'], ['second page body']]));
+const rPdf = await registered.get('office_read').execute({ path: pdfPath }, exec);
+check('office_read(pdf)', rPdf.content.includes('PDF 文档（仅文本层）') && rPdf.content.includes('second page body'), rPdf.content.split('\n')[0]);
+const rPdfPage = await registered.get('office_read').execute({ path: pdfPath, maxChars: 12 }, exec);
+check('office_read(pdf 分段)', rPdfPage.content.includes('继续读'), rPdfPage.content.split('\n')[2]);
+const rPdfQuery = await registered.get('office_query').execute({ path: pdfPath }, exec).catch((err) => err);
+check('office_query 拒绝 PDF', /只能算表格|不支持/.test(String(rPdfQuery.message || rPdfQuery.content)), String(rPdfQuery.message || rPdfQuery.content).slice(0, 60));
 
 // 图片嵌入:工具层要按沙箱规则解析 <img src> 并注入读取器(core 不碰文件系统)
 const imgPath = join(outDir, 'logo.png');

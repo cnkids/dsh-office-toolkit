@@ -23,7 +23,21 @@ npm run coverage   # 同上并统计覆盖率，写出 coverage/lcov.info
 export SONAR_TOKEN=<token> && sonar-scanner   # 会读取 coverage/lcov.info
 ```
 
-当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点，整体覆盖率 90.6%、新代码覆盖率 91.0%（门槛 80%），质量门通过。认知复杂度按 SonarQube 推荐阈值控制在 15 以内。
+当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点，整体覆盖率 95.0%、新代码覆盖率 91.6%（门槛 80%），质量门通过。认知复杂度按 SonarQube 推荐阈值控制在 15 以内。
+
+## 随包第三方代码（`vendor/`）
+
+`vendor/pdfjs/` 是 pdfjs 的官方精简构建（`pdf.min.mjs`、`pdf.worker.min.mjs`、`cmaps/`、`standard_fonts/`、`LICENSE`），供「没有 pdftotext、也不是 macOS」的机器兜底抽 PDF 文本。升级步骤：
+
+```sh
+npm pack pdfjs-dist            # 或 npm i --no-save pdfjs-dist
+tar -xzf pdfjs-dist-*.tgz
+cp package/legacy/build/pdf.min.mjs package/legacy/build/pdf.worker.min.mjs vendor/pdfjs/
+cp -R package/cmaps package/standard_fonts package/LICENSE vendor/pdfjs/
+node test/selftest.mjs && npm run verify:offline   # 抽文本与完整性两道门禁
+```
+
+`verify:offline` 会检查 `vendor/pdfjs` 的关键文件是否齐全（缺一个就算离线不可用）。
 
 ## 发布到 npm（维护者）
 

@@ -13,6 +13,7 @@
 | 解压炸弹 | 只限制压缩包体积，几十 KB 的 zip 可解压出几十 GB | 解压总量 > 1 GiB 或压缩比 > 150:1 直接拒绝（0.3.12） |
 | 图片探测 DoS / 外链抓取 | `html-to-docx` 用 `image-size` 量图片尺寸，而它有 2 个 high DoS（ICNS / JXL / HEIF）且**无修复版**；其维护 fork 改用 `probe-image-size` → `needle`，会按 `<img src>` 真发 HTTP 请求 | 0.3.13 起 `.docx` 由自研生成器产出（`docx@9`）；0.3.28 起图片嵌入也自己做：只读本地文件与 `data:` URL，按魔数识别格式并取尺寸（`lib/core/image.js`），单张 ≤ 8 MB，`http/https` 一律拒绝（`IMAGE_REMOTE`），全程不发网络请求 |
 | `xlsx` 已知漏洞 | Prototype Pollution + ReDoS | 0.3.6 起换 `@e965/xlsx@0.20.3` |
+| PDF 解析（含第三方代码） | PDF 是攻击面很大的格式（内嵌 JS、字体、渲染） | 只用文本层：`isEvalSupported: false`（不解析 PDF 内嵌 JS）、`useSystemFonts: false` + `disableFontFace: true`（不读系统字体、不做字体渲染）、不加载 `@napi-rs/canvas`（不渲染页面）；`vendor/pdfjs` 是 Apache-2.0 的官方精简构建，`verify:offline` 会校验其完整性；系统后端 `pdftotext` / `osascript` 都是无 shell 的 `execFile`，带超时与输出上限，任一失败就换下一个后端 |
 | 依赖链 4 条 `npm audit` 告警 | `uuid`、`image-size` 上游均不可修 | 换 `@wekanteam/exceljs` + 自研 docx 生成，`npm audit` 归零；整棵依赖树无安装脚本（0.3.12 / 0.3.13） |
 | 危险链接 | `javascript:` / `data:` / `vbscript:` / `file:` 链接可被写进文档与关系文件 | 写入 `.docx` 时降级为纯文本（0.3.13） |
 

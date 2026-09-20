@@ -50,7 +50,9 @@ test/                        四个测试脚本
 
 **`npm audit` 0 条，整棵依赖树没有任何安装脚本**（0.3.13 起）。三处取舍：
 
-- **`.docx` 生成是自己写的**（`lib/core/docx-writer.js`，基于 `docx@9`），不再用 `html-to-docx`：它依赖的 `image-size` 有 2 个 high DoS 且 **npm 上所有版本都受影响、没有修复版**；而唯一清掉它的维护 fork 又带 `postinstall` + `axios`/`needle`，会让 `dsh plugin add` 停下来要求批准构建脚本。图片嵌入因此自己做（`lib/core/image.js`）：只读本地文件或 `data:` URL，按魔数认 PNG/JPEG/GIF/BMP 并取像素尺寸，不发任何网络请求。表格侧的「算」全部落在 `lib/core/query.js`（筛选 / 分组 / 聚合 / 透视）与 `lib/core/join.js`（内存哈希等值连接），同样是声明式参数、没有 eval 与表达式解析。
+- **`.docx` 生成是自己写的**（`lib/core/docx-writer.js`，基于 `docx@9`），不再用 `html-to-docx`：它依赖的 `image-size` 有 2 个 high DoS 且 **npm 上所有版本都受影响、没有修复版**；而唯一清掉它的维护 fork 又带 `postinstall` + `axios`/`needle`，会让 `dsh plugin add` 停下来要求批准构建脚本。PDF 抽取文本优先用本机能力（`pdftotext` / macOS PDFKit），兜底则**随包携带** pdfjs 的精简构建（`vendor/pdfjs/`）而不是把它写成 npm 依赖：pdfjs-dist 会把可选依赖 `@napi-rs/canvas` 一起装进来（约 27 MB 原生二进制，只为渲染，而我们只抽文本），vendored 的 `pdf.min.mjs` + worker + `cmaps` + `standard_fonts` 一共 4.2 MB，离线包更小、依赖树依旧零安装脚本。它是 Apache-2.0，`vendor/pdfjs/LICENSE` 随包保留；升级时按 `docs/development.md` 的步骤整体替换。
+
+图片嵌入因此自己做（`lib/core/image.js`）：只读本地文件或 `data:` URL，按魔数认 PNG/JPEG/GIF/BMP 并取像素尺寸，不发任何网络请求。表格侧的「算」全部落在 `lib/core/query.js`（筛选 / 分组 / 聚合 / 透视）与 `lib/core/join.js`（内存哈希等值连接），同样是声明式参数、没有 eval 与表达式解析。
 - **`exceljs` 换成 `@wekanteam/exceljs`**（[Wekan](https://github.com/wekan/exceljs) 维护的 4.x 同线 fork）：上游锁 `uuid@^8.3.0`，而 `uuid` 的告警只在 `11.1.1` 修复，fork 已升到 `uuid@^14`。
 - **`xlsx` 用 `@e965/xlsx@0.20.3`**：npm 上的 `xlsx` 停在 `0.18.5`（Prototype Pollution + ReDoS 两个 high），修复版只在 SheetJS 自建 CDN；而 URL 形式依赖会被 pnpm 的 `blockExoticSubdeps` 拒绝，故改用该官方构建的 npm 转发包（月下载 300 万+，[sheetjs-npm-publisher](https://github.com/e965/sheetjs-npm-publisher)）。代码里写 `import('@e965/xlsx')`。
 

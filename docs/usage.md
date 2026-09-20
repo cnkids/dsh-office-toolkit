@@ -16,12 +16,24 @@
 | 后缀 `.xlsx`，内容其实是 CSV / TSV 文本 | 按分隔符文本读取，提示实际格式 |
 | 主文档部件不在规范路径（如由 `_rels/.rels` 声明为 `word/main.xml`） | 按**包关系**解析主部件后读取，规范名不存在也不影响 |
 | zip 里没有 Office 主文档 | 报 `BAD_CONTAINER`，并列出**实际条目名与插件版本**，便于判断文件真身 |
+| 后缀不是 `.pdf`，内容却是 PDF（`%PDF-` 开头的字节） | 按 PDF 读取，并提示「文件内容其实是 PDF(.pdf)」 |
 
 仍会明确报错、不做猜测的两种情况：文件不存在（`NOT_FOUND`）、传入的是目录（`NOT_A_FILE`）。
 
 ## 读取
 
-Word 正文默认以 Markdown 风格文本返回；Excel 以 TSV 代码块返回，可用 `sheets` / `range` / `maxRows` / `maxCols` 分段读取大表。
+Word 正文默认以 Markdown 风格文本返回；**PDF 返回文本层**（页数 + 正文，多页时插入 `--- 第 N 页 ---` 标记）；Excel 以 TSV 代码块返回，可用 `sheets` / `range` / `maxRows` / `maxCols` 分段读取大表。
+
+**PDF 读取**（只抽文本，不做 OCR）：
+
+| 项 | 说明 |
+| --- | --- |
+| 后端顺序 | `pdftotext`（poppler，装了就用） → macOS 自带 PDFKit（`osascript` 走 ObjC 桥，零安装） → 随包携带的 pdfjs（离线兜底，Windows / 无 poppler 的机器靠它）；某个后端失败会自动换下一个，结果里的「解析方式」写明实际用了哪个 |
+| 分段读 | 与 Word 一致：`maxChars` 每段大小、`offset` 续读、返回里给出「继续读」的位置 |
+| 页清单 | `outline: true` 给页清单（TSV：级别 / 字符偏移 / 标题），单页 PDF 也给「第 1 页」 |
+| 输出格式 | 默认 text；`format: "html"` 是**文本重建**的 HTML |
+| 排版格式 | `withFormatting` 对 PDF 无效（没有字体 / 行距这类信息），会明确说明 |
+| 读不出来的情况 | 加密 / 有打开密码 → `PDF_ENCRYPTED`；扫描件（图片型 PDF，没有文本层）→ 明确提示需要 OCR；文件损坏 → `PDF_READ_FAILED` 并列出每个后端的失败原因 |
 
 **只看内容**用 `office_read`；**要算**（求和 / 分组 / 筛选 / 去重 / 排序）用 [`office_query`](#计算office_query) —— 后者不会把整张表读进上下文。
 
@@ -433,6 +445,7 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 
 - 图表支持 `bar` / `column` / `line` / `pie`（以 OOXML 注入实现，数据由 Excel / WPS 打开时计算）；组合图、双轴等请手动调整。一个工作表只能有一个 drawing 部件，因此同表多图表共用一个 drawing（各自独立锚点，可分别拖动）。
 - `.doc` 纯 JS 解析不保留表格与版式；写出 `.doc` / `.odt`、转 `.pdf` 需要 LibreOffice 或 Word。
+- PDF 只保证**文本与页数**：版式、表格、图片不可靠（多栏可能串行）；扫描件需要 OCR，本插件不做；`.pdf` 不能当表格算（`office_query` 会明确拒绝）。
 - 图片嵌入只认**本地文件**与 `data:` URL（PNG / JPEG / GIF / BMP，单张 ≤ 8 MB）：按魔数读真实像素尺寸，超出正文宽就等比缩到页内；`<img width="120">` 或 CSS `width:50%` 可指定宽度。远程地址（`http/https`）直接报 `IMAGE_REMOTE` —— 本插件不联网，请先下载到本地；缺失文件、不支持的格式（SVG / WebP / TIFF）也各自报错，不会静默丢图。
 - CSV / TSV / TXT 按 **UTF-8** 解码（这类格式不带编码信息），GBK 等其他编码请先转码。
 - `javascript:` / `data:` / `vbscript:` / `file:` 链接在写入 `.docx` 时会降级为纯文本。
@@ -495,10 +508,10 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 | `range` | string | — | 仅 Excel：读取范围，如 A1:F50 |
 | `maxRows` | integer | — | 仅 Excel：最多读取行数，默认 400 |
 | `maxCols` | integer | — | 仅 Excel：最多读取列数，默认 60 |
-| `maxChars` | integer | — | Word 正文每段返回的字符上限（分页大小），默认 90000 |
-| `offset` | integer | — | 仅 Word：从正文第几个字符开始返回，默认 0。返回里会给出总字符数与下次该传的 offset，用于分段读长文档；offset 超出总长会明确提示已到末尾 |
-| `outline` | boolean | — | 仅 Word 的 text 模式：只返回标题大纲（TSV：级别 / 字符偏移 / 标题），可据此传 offset 直接跳到某一章；与 format: "html" 不能同时用 |
-| `format` | enum: `text` / `html` | — | Word 输出格式：text=Markdown 风格（默认），html=原始 HTML |
+| `maxChars` | integer | — | Word / PDF 正文每段返回的字符上限（分页大小），默认 90000 |
+| `offset` | integer | — | 仅 Word / PDF：从正文第几个字符开始返回，默认 0。返回里会给出总字符数与下次该传的 offset，用于分段读长文档；offset 超出总长会明确提示已到末尾 |
+| `outline` | boolean | — | 仅 Word / PDF 的 text 模式：只返回标题大纲（Word 是 Markdown 标题、PDF 是页清单；TSV：级别 / 字符偏移 / 标题），可据此传 offset 直接跳读；与 format: "html" 不能同时用 |
+| `format` | enum: `text` / `html` | — | Word / PDF 输出格式：text=Markdown 风格（默认），html=原始 HTML |
 | `formulas` | string | — | 仅表格：`value`（默认，计算值）/ `formula`（公式本体）/ `both`（公式 → 值）；传 `true` 等同 `formula` |
 | `withFormatting` | boolean | — | 仅 .docx：额外返回格式报告 —— 每段的字体(中文/西文)、字号、行距(固定值/倍数)、首行缩进、对齐、样式名，以及页面尺寸与页边距；并给出格式分布(主流值)与偏离主流的段落。用于比对行文规则(如"正文三号仿宋、行距固定值 28.8 磅")。结构化数据在 meta.formatting。 |
 

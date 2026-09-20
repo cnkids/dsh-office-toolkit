@@ -21,6 +21,8 @@ import { normalizeStyleSpec, normalizeTableSpec, autoColumnPercents, lengthToTwi
 import { scanTables } from '../lib/core/docx-table.js';
 import { headingStyleIds, levelTextAt, NUMBERING_PRESETS } from '../lib/core/docx-numbering.js';
 import { formatCounter } from '../lib/core/docx-numbering-read.js';
+import { joinPages, looksLikePdf, normalizePdfText, readPdfText } from '../lib/core/pdf.js';
+import { pdfFixture } from './pdf-fixture.mjs';
 import { fitImageSize, loadImage, probeImage } from '../lib/core/image.js';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -674,6 +676,79 @@ await t('编号: formatCounter 覆盖中文/罗马/字母等数字格式', async
     if (got !== want) throw new Error(`${fmt}(${value}) = ${got}，应为 ${want}`);
   }
   return `${cases.length} 种数字格式`;
+});
+
+// ---------------------------------------------------------------------------
+// PDF 读取(只抽文本层):本机能力优先,内置 pdfjs 兜底
+// ---------------------------------------------------------------------------
+const pdfDir = join(outDir, 'pdf');
+await mkdir(pdfDir, { recursive: true });
+const pdfTwoPages = join(pdfDir, 'two-pages.pdf');
+const pdfBytes = pdfFixture([['Hello PDF', 'Second line'], ['Page two text']]);
+writeFileSync(pdfTwoPages, pdfBytes);
+
+await t('pdf: 纯 JS 后端抽文本(页标记 / 分页 / 归一化)', async () => {
+  const r = await readPdfText(pdfBytes, { path: pdfTwoPages, backend: 'pdfjs' });
+  if (r.backend !== '内置 pdfjs') throw new Error('后端不对: ' + r.backend);
+  if (r.pages !== 2) throw new Error('页数不对: ' + r.pages);
+  const want = '--- 第 1 页 ---\nHello PDF\nSecond line\n\n--- 第 2 页 ---\nPage two text';
+  if (r.text !== want) throw new Error('文本不对: ' + JSON.stringify(r.text));
+  if (r.truncated) throw new Error('不该截断');
+  // 单页不加页标记;多页才加
+  if (joinPages(['only page']) !== 'only page') throw new Error('单页不该加页标记');
+  if (normalizePdfText('a  \r\n\r\n\r\n\r\nb\0') !== 'a\n\nb') throw new Error('归一化不对: ' + JSON.stringify(normalizePdfText('a  \r\n\r\n\r\n\r\nb\0')));
+  if (!looksLikePdf(pdfBytes) || looksLikePdf(Buffer.from('not a pdf')) || looksLikePdf(Buffer.alloc(0))) {
+    throw new Error('PDF 魔数判断不对');
+  }
+  return `${r.pages} 页 / ${r.text.length} 字，页标记正确`;
+});
+
+await t('pdf: 本机后端链(有系统能力就用,并给出后端名)', async () => {
+  const auto = await readPdfText(pdfBytes, { path: pdfTwoPages });
+  const pure = await readPdfText(pdfBytes, { path: pdfTwoPages, backend: 'pdfjs' });
+  if (auto.text !== pure.text) throw new Error(`系统后端与内置 pdfjs 结果不一致: ${auto.backend}`);
+  const usable = ['pdftotext', 'macOS PDFKit', '内置 pdfjs'];
+  if (!usable.includes(auto.backend)) throw new Error('后端名不对: ' + auto.backend);
+  // macOS 自带 PDFKit:只在 macOS 上断言(CI 的 Linux 跑不了)
+  if (process.platform === 'darwin') {
+    const kit = await readPdfText(pdfBytes, { path: pdfTwoPages, backend: 'pdfkit' });
+    if (kit.backend !== 'macOS PDFKit' || kit.text !== pure.text) throw new Error('PDFKit 抽取不对: ' + JSON.stringify(kit.text));
+  }
+  return `本机用 ${auto.backend}，与内置 pdfjs 结果一致`;
+});
+
+await t('pdf: office_read 走通(分段 / 页大纲 / html / 错误码)', async () => {
+  const read = await office.opRead(pdfTwoPages, {}, {});
+  if (read.meta.kind !== 'pdf' || read.meta.pages !== 2) throw new Error('meta 不对: ' + JSON.stringify(read.meta));
+  if (!read.content.includes('PDF 文档（仅文本层）') || !read.content.includes('Page two text')) throw new Error('正文不对: ' + read.content.slice(0, 120));
+  const paged = await office.opRead(pdfTwoPages, { maxChars: 30 }, {});
+  if (!paged.meta.truncated || paged.meta.end >= read.meta.totalChars) throw new Error('分段没生效: ' + JSON.stringify(paged.meta));
+  const rest = await office.opRead(pdfTwoPages, { offset: paged.meta.end }, {});
+  const bodyOf = (text) => text.slice(text.indexOf('\n\n') + 2);
+  if (bodyOf(paged.content) + bodyOf(rest.content) !== bodyOf(read.content)) {
+    throw new Error(`续读没接上: ${JSON.stringify(bodyOf(paged.content))} + ${JSON.stringify(bodyOf(rest.content))}`);
+  }
+  if (rest.meta.end !== read.meta.totalChars) throw new Error('续读没到文末: ' + JSON.stringify(rest.meta));
+  const outline = await office.opRead(pdfTwoPages, { outline: true }, {});
+  if (outline.meta.outline.length !== 2 || outline.meta.outline[1].title !== '第 2 页') {
+    throw new Error('页大纲不对: ' + JSON.stringify(outline.meta.outline));
+  }
+  const html = await office.opRead(pdfTwoPages, { format: 'html' }, {});
+  if (!html.content.includes('Hello PDF') || !html.html.includes('<p>')) throw new Error('html 模式不对');
+  const formatted = await office.opRead(pdfTwoPages, { withFormatting: true }, {});
+  if (!formatted.content.includes('没有字体 / 行距这类排版格式报告')) throw new Error('withFormatting 提示缺失');
+  // 改后缀也认:内容嗅探优先
+  const renamed = join(pdfDir, 'actually-pdf.txt');
+  writeFileSync(renamed, pdfBytes);
+  const sniffed = await office.opRead(renamed, {}, {});
+  if (!sniffed.content.includes('文件内容其实是 PDF') || !sniffed.content.includes('Page two text')) {
+    throw new Error('改后缀的 PDF 没被识别: ' + sniffed.content.slice(0, 120));
+  }
+  const bad = await (async () => { try { await readPdfText(Buffer.from('%PDF-1.4\n乱码'), { backend: 'pdfjs' }); return ''; } catch (e) { return `${e.code}|${e.message}`; } })();
+  if (!bad.startsWith('PDF_READ_FAILED')) throw new Error('损坏 PDF 的报错不对: ' + bad);
+  const notPdf = await (async () => { try { await readPdfText(Buffer.from('这不是 PDF'), {}); return ''; } catch (e) { return `${e.code}|${e.message}`; } })();
+  if (!notPdf.startsWith('BAD_PDF')) throw new Error('非 PDF 的报错不对: ' + notPdf);
+  return '分段 / 页大纲 / html / 改后缀 / 2 类错误码';
 });
 
 // ---------------------------------------------------------------------------
