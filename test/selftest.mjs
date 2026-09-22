@@ -2427,6 +2427,55 @@ await t('依赖: 缺包时报错点明包名、用途与修复命令', async () 
   return '包名 / 用途 / 修复命令 / 原样透传 / 懒加载 均正确';
 });
 
+await t('依赖: DSH 0.1.6-alpha 解析器故障给出针对性提示,不误判为缺依赖', async () => {
+  // 宿主侧 profile 解析器把 `process/` 这类尾斜杠内建名当普通包解析,
+  // resolve.paths() 对内建名返回 null 后直接 for...of。两种形态都要认出来。
+  const shapes = [
+    new TypeError('createRequire.resolve.paths is not a function or its return value is not iterable'),
+    Object.assign(new Error("Cannot find module 'process/'"), { code: 'MODULE_NOT_FOUND' }),
+    Object.assign(new Error("Cannot find module 'string_decoder/'"), { code: 'ERR_MODULE_NOT_FOUND' }),
+  ];
+  for (const raw of shapes) {
+    const err = depFailure(raw, '读写 .xlsx');
+    if (err.code !== 'DSH_RESOLVER_BUG') throw new Error(`未识别为宿主解析器故障(${err.code}): ${err.message}`);
+    if (!err.message.includes('DSH 0.1.6-alpha')) throw new Error('未点明是 DSH 0.1.6-alpha 的缺陷: ' + err.message);
+    if (!err.message.includes('deepseek-harness/discussions/7377')) throw new Error('未给出 DSH 侧报告链接: ' + err.message);
+    if (!err.message.includes('不是本插件缺少依赖')) throw new Error('未排除「缺依赖」这一误导结论: ' + err.message);
+    if (err.message.includes('dsh plugin --profile web add')) throw new Error('仍在误导用户重装依赖: ' + err.message);
+    if (!err.message.includes(raw.message)) throw new Error('未保留原始报错: ' + err.message);
+  }
+  // 真缺包不受影响;非内建名的尾斜杠也不能误伤
+  const real = Object.assign(new Error("Cannot find module 'mammoth'"), { code: 'MODULE_NOT_FOUND' });
+  if (depFailure(real, '读取 .docx').code !== 'MISSING_DEPENDENCY') throw new Error('正常缺包被误判为宿主故障');
+  const otherSlash = Object.assign(new Error("Cannot find module 'readable-stream/'"), { code: 'MODULE_NOT_FOUND' });
+  if (depFailure(otherSlash, 'x').code !== 'MISSING_DEPENDENCY') throw new Error('非内建名尾斜杠被误判');
+  return 'TypeError / process/ / string_decoder/ 三种形态均定位到 DSH 缺陷,正常缺包不受影响';
+});
+
+await t('依赖: 解析器故障经真实 import 失败链路也包成 DSH_RESOLVER_BUG', async () => {
+  // 上一条只测收口函数;这条走 lazyModule → loadCore → 真实 import() 拒绝 →
+  // depFailure,把 wiring 也钉住(不能端到端复现 DSH 缺陷,但能证明故障一旦
+  // 以这两种形态冒出来,用户看到的一定是针对性提示)。
+  const cases = [
+    ["const e = new Error(\"Cannot find module 'process/'\"); e.code = 'MODULE_NOT_FOUND'; throw e;",
+      "Cannot find module 'process/'"],
+    ["throw new TypeError('createRequire.resolve.paths is not a function or its return value is not iterable');",
+      'resolve.paths is not a function'],
+  ];
+  for (const [src, needle] of cases) {
+    const spec = 'data:text/javascript,' + encodeURIComponent(src);
+    const mod = lazyModule(spec, '读写 .xlsx', ['go']);
+    try {
+      await mod.go();
+      throw new Error('懒加载没有抛错: ' + needle);
+    } catch (e) {
+      if (e.code !== 'DSH_RESOLVER_BUG') throw new Error(`未包成 DSH_RESOLVER_BUG(${e.code}): ${e.message}`);
+      if (!e.message.includes(needle)) throw new Error('透传的原报错丢了: ' + e.message);
+    }
+  }
+  return '两种形态经 loadCore 全链路都给出 DSH_RESOLVER_BUG';
+});
+
 await t('依赖: 加载时自检能列出缺失依赖(本机应为空)', async () => {
   const missing = missingDeps();
   if (missing.length) throw new Error('本机缺依赖: ' + missing.join(', '));

@@ -157,6 +157,8 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **某份文件读不出来？** 插件已按**真实内容**判断格式：非标准 zip（条目名含反斜杠）、改过后缀的文件（`.doc` 里其实是 docx、`.xlsx` 里其实是 CSV 等）都会自动按实际格式读取并给出提示。若报 `BAD_CONTAINER`，错误信息会列出文件里的实际条目，便于判断它到底是什么。详见[用法与参数](docs/usage.md#读取兼容性)。
 
+**`.xlsx` 读写全失败，报 `createRequire.resolve.paths is not a function` 或 `Cannot find module 'process/'`？** 这是 **DSH 0.1.6-alpha.1 / .2 的模块解析缺陷**，不是插件缺依赖 —— 重装、重启都没用；只有走 ExcelJS 的 xlsx 路径会中招，`.csv` / `.docx` 正常。插件侧无法绕开，请升级到修复版 DSH。报错现在会直接说明这一点（错误码 `DSH_RESOLVER_BUG`），不再误导你重装依赖；DSH 侧分析见 [discussions/7377](https://github.com/deepseek-ai/deepseek-harness/discussions/7377#discussion-10858263)。
+
 **几万行的表怎么统计？** 用 `office_query`，它在文件内算完只回结论，不需要把整张表读进上下文。例如按地区求和、按金额倒序取前 20、只看某段时间的数据，都是一次调用；先不带条件跑一次还能拿到每列的类型、空值、去重数与高频值（表结构画像）。跨文件 join、透视表、统计建模这类插件覆盖不了的，再照常写脚本。
 
 **几百页的 Word 怎么读？** 一次 `office_read` 只返回 `maxChars`（默认 90000 字符）那么长，返回里会写明总字符数和「继续读」该传的 `offset`，下一次带上它就从断点接着读，不必从头重来；也可以先传 `outline: true` 拿标题大纲（级别 / 字符偏移 / 标题），直接跳到某一章。
@@ -188,6 +190,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.31** | 命中 DSH 0.1.6-alpha.1 / .2 的模块解析缺陷（xlsx 路径全失败）时不再误报「缺依赖」，改为说明这是宿主缺陷并给出 DSH 侧报告链接（新错误码 `DSH_RESOLVER_BUG`）；README 补一条已知问题 |
 | **0.3.30** | 修 PDF 读取在 Windows 上必失败：内置 pdfjs 起 fake worker 用的是 `await import(workerSrc)`，Node 的 ESM 加载器只认 `file:` / `data:` / `node:`，Windows 的 `C:\…` 裸路径会抛「Only URLs with a scheme in: file, data, and node」（POSIX 绝对路径碰巧能过，所以之前只在 Mac 上验证过）。现在 `workerSrc` 一律给 `file://` URL；同时把内置 pdfjs 从 6.3.289 换成 **4.10.38**（前者 `engines: node >= 22.13` 且无 polyfill，会在 Node 20/22 上抛 `Promise.withResolvers is not a function`；后者声明 `>= 20` 并自带 polyfill），插件的 Node ≥ 20 承诺才成立 |
 | **0.3.29** | `office_read` 支持 `.pdf`：只抽文本层（页数 + 文本，多页带 `--- 第 N 页 ---` 标记），`offset` / `maxChars` 分段读、`outline` 给页清单、`format: "html"` 也是文本重建；后端链为 `pdftotext`（poppler）→ macOS 自带 PDFKit → 随包携带的 pdfjs，任一可用即可读，缺工具不会读不出来。图片型（扫描件）没有文本层，会明确提示需要 OCR。随包新增 `vendor/pdfjs`（Apache-2.0，仅文本抽取，不渲染、不联网、`isEvalSupported: false`），离线包依旧零外部依赖、零安装脚本 |
 | **0.3.28** | ① 新增 `office_edit_docx`：就地改已有 Word（查找替换 / 整段改写 / 改排版 / 多级编号 / 插入删除段落 / 表格样式与增删行列 / 合并单元格），只重写正文部件。② 排版：`office_write_docx` 的 `style` 设字体·字号·行距·首行缩进·对齐·段前后（标题 `headings`、表格 `table` 含按内容自动列宽与单元格内边距），html 内联样式补齐 `font-family`（含中文 `eastAsia`）/`line-height`/`text-indent`/`margin` 并支持容器继承。③ `set_style` 按角色选段落（正文 / 标题 / 表格内 / 全部 + 区间）。④ `set_numbering` 多级自动编号（标题挂样式链接 + 正文列表挂当前标题下一级，含公文体例预置）。⑤ `office_read` 读取时把 Word 自动编号展开成文字（`一、`/`（一）`/`1.1`）。⑥ `office_write_docx` / `office_convert` 支持 `<img>` 嵌入本地图片（PNG/JPEG/GIF/BMP，按正文宽等比缩放，不联网）。⑦ 表格 `set_table` 增 `repeatHeader`/`cellVerticalAlign`/`rowHeightPt`/`cantSplit` 与 `unmerge_table_cells`。⑧ `office_query` 支持多表 `join`（inner/left/right/full）与 `pivot` 透视表（含合计）。⑨ `office_edit_xlsx` 增 `conditional_format`（9 种规则）与 `data_validation`（下拉 / 区间 / 公式）。⑩ `office_read` 可按 `formulas` 切换公式本体与计算值；修 `.xlsb` / `.ods` 的家族判定（此前分别被当成损坏文件与 Word 文档） |

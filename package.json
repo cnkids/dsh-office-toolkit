@@ -1,7 +1,7 @@
 {
   "name": "dsh-office-toolkit",
   "description": "让 DSH 智能体自己读写 Word / Excel：纯 JavaScript，不装 Office 也能跑。",
-  "version": "0.3.30",
+  "version": "0.3.31",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
