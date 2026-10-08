@@ -454,7 +454,18 @@ await t('排版: 单位换算与规格规范化(公文体例)', async () => {
   if (lengthToTwips('32px', null) !== 480) throw new Error('32px 应按 96dpi 换算成 480');
   if (lengthToTwips('2em', 32) !== 640) throw new Error('2em(三号) 应为 640');
   const heads = normalizeStyleSpec({ font: '仿宋', headings: { font: '黑体', sizePt: 16 } });
-  if (heads.headings.font !== '黑体') throw new Error('headings 没被解析');
+  if (heads.headings.base.font !== '黑体') throw new Error('headings 没被解析');
+  // 按级覆盖:大小写与别名都认,未被覆盖的属性退回通用部分
+  const perLevel = normalizeStyleSpec({
+    font: '仿宋',
+    headings: { font: '黑体', sizePt: 16, heading2: { font: '楷体', bold: true }, h3: { font: '仿宋', firstLineIndentChars: 2 } },
+  });
+  if (perLevel.headings.base.font !== '黑体') throw new Error('按级写法下通用部分应保留');
+  if (perLevel.headings.levels[2]?.font !== '楷体' || perLevel.headings.levels[2]?.bold !== true) {
+    throw new Error('heading2 覆盖没解析: ' + JSON.stringify(perLevel.headings.levels));
+  }
+  if (perLevel.headings.levels[3]?.font !== '仿宋') throw new Error('h3 别名没解析');
+  if (perLevel.headings.levels[1] !== undefined) throw new Error('未被覆盖的级别不该出现条目');
   const noHeads = await (async () => { try { normalizeStyleSpec({ headings: { font: 'x' } }, { allowHeadings: false }); return ''; } catch (e) { return e.code; } })();
   if (noHeads !== 'INVALID_ARGS') throw new Error('set_style 不该接受 headings: ' + noHeads);
   return `三号 32 半磅 / 行距 576 / 缩进 640 twip`;
@@ -1231,6 +1242,42 @@ await t('角色选择: body 只改正文,headings 只改标题,table 只改表�
   if (!/w:pStyle w:val="Heading1"/.test(bodyDoc)) throw new Error('改正文把标题样式抹掉了');
   const bodyText = scanParagraphs(bodyDoc).filter((p) => p.headingLevel > 0).map((p) => p.text);
   if (bodyText.join() !== '标题一,标题二') throw new Error('标题内容被改了: ' + bodyText.join());
+
+  // 按标题级别选中:heading1 只命中一级标题,且别名 h1 等价。
+  // 三级用互不相同的字号/字体,避免「批次串位」也能通过。
+  const h1Only = await editDocx(buf, [{ op: 'set_style', scope: 'heading1', sizePt: 18, font: '黑体' }]);
+  if (!h1Only.changes[0].includes('1 段')) throw new Error(`heading1 应只命中 1 段: ${h1Only.changes[0]}`);
+  const h1Alias = await editDocx(buf, [{ op: 'set_style', scope: 'h1', sizePt: 18, font: '黑体' }]);
+  if (!h1Alias.changes[0].includes('1 段')) throw new Error(`h1 别名应等价: ${h1Alias.changes[0]}`);
+  const h2Only = await editDocx(buf, [{ op: 'set_style', scope: 'heading2', sizePt: 17, font: '楷体' }]);
+  if (!h2Only.changes[0].includes('1 段')) throw new Error(`heading2 应只命中 1 段: ${h2Only.changes[0]}`);
+  const h3ByName = await editDocx(buf, [{ op: 'set_style', scope: '标题2', sizePt: 15, font: '仿宋' }]);
+  if (!h3ByName.changes[0].includes('1 段')) throw new Error(`中文级别名应等价: ${h3ByName.changes[0]}`);
+
+  // 逐级核对:每级只带自己那份格式,别的级别格式不能被串改（本 fixture 只有一级、二级标题）
+  const applied = await editDocx(buf, [
+    { op: 'set_style', scope: 'heading1', sizePt: 18, font: '黑体' },
+    { op: 'set_style', scope: 'heading2', sizePt: 17, font: '楷体' },
+  ]);
+  const appliedDoc = await partText(applied.buf, 'document.xml');
+  const sliceOf = new Map();
+  for (const p of scanParagraphs(appliedDoc)) {
+    if (p.headingLevel) sliceOf.set(p.headingLevel, appliedDoc.slice(p.start, p.end));
+  }
+  const fontOf = (s) => (s?.match(/w:eastAsia="([^"]+)"/) ?? [])[1];
+  const sizeOf = (s) => (s?.match(/<w:sz w:val="(\d+)"/) ?? [])[1];
+  if (fontOf(sliceOf.get(1)) !== '黑体' || sizeOf(sliceOf.get(1)) !== '36') {
+    throw new Error(`一级标题格式不对: ${fontOf(sliceOf.get(1))}/${sizeOf(sliceOf.get(1))}`);
+  }
+  if (fontOf(sliceOf.get(2)) !== '楷体' || sizeOf(sliceOf.get(2)) !== '34') {
+    throw new Error(`二级标题格式不对: ${fontOf(sliceOf.get(2))}/${sizeOf(sliceOf.get(2))}`);
+  }
+  if (sliceOf.has(3)) throw new Error('本 fixture 不该出现三级标题');
+  // 不存在的级别要报错而不是静默通过
+  const noLevel = await (async () => {
+    try { await editDocx(buf, [{ op: 'set_style', scope: 'heading5', sizePt: 18 }]); return ''; } catch (e) { return e.code; }
+  })();
+  if (noLevel !== 'PARAGRAPH_NOT_FOUND') throw new Error('heading5 无匹配时应报 PARAGRAPH_NOT_FOUND: ' + noLevel);
   return `全部 ${all.length} 段 = 标题 ${headings} + 正文 ${all.length - headings}（含表格内 ${inTable}）`;
 });
 
