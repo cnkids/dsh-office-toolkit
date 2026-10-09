@@ -35,7 +35,7 @@
 - **大表直接算，不用先搬数据** —— `office_query` 在文件内做筛选 / 分组 / 求和 / 计数 / 去重 / 排序，几万行也只返回结论；不给条件时返回表结构画像。跨文件的**多表连接**（`join`：inner/left/right/full，列名相同或左右对应）与**透视表**（`pivot`：行 × 列 × 指标，可带合计）也在这里做，不用写脚本。
 - **排版可指定** —— `style` 参数设整篇字体 / 字号 / 行距 / 首行缩进 / 对齐（公文体例：仿宋_GB2312 三号、行距固定值 28.8 磅、首行缩进 2 字符），标题用 `style.headings`，表格用 `style.table`（三线表 / 表头底纹 / **按内容自动分配列宽**）；html 内联样式也认 `font-family`（含中文 `eastAsia`）/ `line-height` / `text-indent` / `margin`，`<body>`、`<div>` 上的样式会被继承。
 - **改之前能先看、改之后能留底** —— `office_edit_docx` 传 `dryRun: true` 只报改动不写盘，传 `outputPath` 另存为新文件而原文件不变。
-- **改已有文档能分段、分角色** —— `set_style` 的 `scope` 支持 `body`（正文，不含标题）/ `headings` / `table` / `all`，可叠加段落区间；例如「只把正文改成单倍行距」一句就够。表格另有 `set_table`（框线 / 底纹 / 列宽 / 单元格内边距 / 垂直对齐 / 行高 / 表头跨页重复 / 禁止断行）、增删行列、合并与取消合并，以及 `delete_table` 整表删除（含删空后的 0 行残留）。
+- **改已有文档能分段、分角色** —— `set_style` 的 `scope` 支持 `body`（正文，不含标题）/ `headings` / `heading1`–`heading9`（指定某一级标题）/ `table` / `all`，可叠加段落区间；例如「只把正文改成单倍行距」或「光改二级标题」一句就够。表格另有 `set_table`（框线 / 底纹 / 列宽 / 单元格内边距 / 垂直对齐 / 行高 / 表头跨页重复 / 禁止断行）、增删行列、合并与取消合并，以及 `delete_table` 整表删除（含删空后的 0 行残留）。
 - **多级自动编号** —— `set_numbering` 把标题按样式挂上 Word 多级编号（`1.` / `1.1` / `1.1.1`），正文列表挂到当前标题层级之下；支持 `exclude`（某些标题不参与）与 `startFrom`（从哪级起算、起始数字）；**幂等**，重复调用原地替换不堆积定义。编号由 Word 维护，改标题会自动重排，不用手写「一、」「1.1」。
 - **页眉页脚、页码、目录** —— `header` / `footer`（页码是 Word 域，如「第 X 页 共 Y 页」或公文式「— 1 —」）、`toc` 插入目录域；插件已设 `updateFields`，Word 打开即按当前排版刷新。
 - **图片与编号都落到实处** —— `<img>` 指向本地文件或 `data:` URL 就嵌成真图片（PNG / JPEG / GIF / BMP，按魔数读尺寸、按正文宽等比缩放；不联网，远程地址与超 8 MB 直接报错）；读 Word 时把自动编号展开成文字（`一、` / `（一）` / `1.1`），行文规则比对看得到层级。
@@ -190,6 +190,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.32** | 修 `style.headings` 按级配置失效：此前 `normalizeStyleSpec` 的白名单会丢弃 headings 里的非 table 键，导致标题样式从未写入（字号看似生效实为 docx 内置默认值）。现在 headings 支持「通用 + 按级覆盖」两种写法，键名兼容 `heading1`–`heading9` / `h1`–`h9` / `标题1`–`9` / `1`–`9`，未被级键覆盖的属性退回通用部分；`set_style` 的 `scope` 新增 `heading1`–`heading9`（也认 `h2`、`标题2`），可只改某一级标题 |
 | **0.3.31** | 命中 DSH 0.1.6-alpha.1 / .2 的模块解析缺陷（xlsx 路径全失败）时不再误报「缺依赖」，改为说明这是宿主缺陷并给出 DSH 侧报告链接（新错误码 `DSH_RESOLVER_BUG`）；README 补一条已知问题 |
 | **0.3.30** | 修 PDF 读取在 Windows 上必失败：内置 pdfjs 起 fake worker 用的是 `await import(workerSrc)`，Node 的 ESM 加载器只认 `file:` / `data:` / `node:`，Windows 的 `C:\…` 裸路径会抛「Only URLs with a scheme in: file, data, and node」（POSIX 绝对路径碰巧能过，所以之前只在 Mac 上验证过）。现在 `workerSrc` 一律给 `file://` URL；同时把内置 pdfjs 从 6.3.289 换成 **4.10.38**（前者 `engines: node >= 22.13` 且无 polyfill，会在 Node 20/22 上抛 `Promise.withResolvers is not a function`；后者声明 `>= 20` 并自带 polyfill），插件的 Node ≥ 20 承诺才成立 |
 | **0.3.29** | `office_read` 支持 `.pdf`：只抽文本层（页数 + 文本，多页带 `--- 第 N 页 ---` 标记），`offset` / `maxChars` 分段读、`outline` 给页清单、`format: "html"` 也是文本重建；后端链为 `pdftotext`（poppler）→ macOS 自带 PDFKit → 随包携带的 pdfjs，任一可用即可读，缺工具不会读不出来。图片型（扫描件）没有文本层，会明确提示需要 OCR。随包新增 `vendor/pdfjs`（Apache-2.0，仅文本抽取，不渲染、不联网、`isEvalSupported: false`），离线包依旧零外部依赖、零安装脚本 |

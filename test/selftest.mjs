@@ -1243,18 +1243,23 @@ await t('角色选择: body 只改正文,headings 只改标题,table 只改表�
   const bodyText = scanParagraphs(bodyDoc).filter((p) => p.headingLevel > 0).map((p) => p.text);
   if (bodyText.join() !== '标题一,标题二') throw new Error('标题内容被改了: ' + bodyText.join());
 
-  // 按标题级别选中:heading1 只命中一级标题,且别名 h1 等价。
-  // 三级用互不相同的字号/字体,避免「批次串位」也能通过。
+  return `全部 ${all.length} 段 = 标题 ${headings} + 正文 ${all.length - headings}（含表格内 ${inTable}）`;
+});
+
+await t('角色选择: set_style 按标题级别选中(headingN 与别名)', async () => {
+  const md = ['# 标题一', '', '正文第一段。', '', '## 标题二', '', '正文第二段。'].join('\n');
+  const buf = await word.writeDocx({ markdown: md }, { title: 't' });
+  // 别名等价:headingN / hN / 中文「标题N」都指同一级,且只命中那一级。
   const h1Only = await editDocx(buf, [{ op: 'set_style', scope: 'heading1', sizePt: 18, font: '黑体' }]);
   if (!h1Only.changes[0].includes('1 段')) throw new Error(`heading1 应只命中 1 段: ${h1Only.changes[0]}`);
   const h1Alias = await editDocx(buf, [{ op: 'set_style', scope: 'h1', sizePt: 18, font: '黑体' }]);
   if (!h1Alias.changes[0].includes('1 段')) throw new Error(`h1 别名应等价: ${h1Alias.changes[0]}`);
   const h2Only = await editDocx(buf, [{ op: 'set_style', scope: 'heading2', sizePt: 17, font: '楷体' }]);
   if (!h2Only.changes[0].includes('1 段')) throw new Error(`heading2 应只命中 1 段: ${h2Only.changes[0]}`);
-  const h3ByName = await editDocx(buf, [{ op: 'set_style', scope: '标题2', sizePt: 15, font: '仿宋' }]);
-  if (!h3ByName.changes[0].includes('1 段')) throw new Error(`中文级别名应等价: ${h3ByName.changes[0]}`);
+  const h2ByName = await editDocx(buf, [{ op: 'set_style', scope: '标题2', sizePt: 15, font: '仿宋' }]);
+  if (!h2ByName.changes[0].includes('1 段')) throw new Error(`中文级别名应等价: ${h2ByName.changes[0]}`);
 
-  // 逐级核对:每级只带自己那份格式,别的级别格式不能被串改（本 fixture 只有一级、二级标题）
+  // 逐级核对:每级只带自己那份格式,别的级别不能被串改(本 fixture 只有一级、二级标题)
   const applied = await editDocx(buf, [
     { op: 'set_style', scope: 'heading1', sizePt: 18, font: '黑体' },
     { op: 'set_style', scope: 'heading2', sizePt: 17, font: '楷体' },
@@ -1278,7 +1283,7 @@ await t('角色选择: body 只改正文,headings 只改标题,table 只改表�
     try { await editDocx(buf, [{ op: 'set_style', scope: 'heading5', sizePt: 18 }]); return ''; } catch (e) { return e.code; }
   })();
   if (noLevel !== 'PARAGRAPH_NOT_FOUND') throw new Error('heading5 无匹配时应报 PARAGRAPH_NOT_FOUND: ' + noLevel);
-  return `全部 ${all.length} 段 = 标题 ${headings} + 正文 ${all.length - headings}（含表格内 ${inTable}）`;
+  return 'headingN/hN/标题N 别名等价 + 逐级格式不串位 + 缺级报错';
 });
 
 await t('表格: 框线与列宽规格(含按内容自动分配)', async () => {

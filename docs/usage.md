@@ -173,7 +173,7 @@ Word 正文默认以 Markdown 风格文本返回；**PDF 返回文本层**（页
 | `firstLineIndentChars` / `firstLineIndentPt` | 首行缩进（字符数 / 磅值），公文常用 2 字符；`0` 表示不缩进 |
 | `align` | `both`（两端对齐）/ `center` / `left` / `right` |
 | `spacingBeforePt` / `spacingAfterPt` | 段前 / 段后距（磅） |
-| `headings` | 各级标题（Heading1–6）的排版，写法同本对象 |
+| `headings` | 各级标题的排版，写法同本对象。两种写法：① 不加级键＝所有标题级统一，如 `{"font":"黑体","sizePt":16}`；② 按级覆盖（可混用）—— 键名 `heading1`–`heading9` / `h1`–`h9` / `标题1` / `1` 都认，如 `{"heading1":{"font":"黑体"},"heading2":{"font":"楷体","bold":true}}`，未被级键覆盖的属性退回① |
 | `table` | 表格样式，见下 |
 
 这些都会写进文档默认样式（`docDefaults`），所以正文段落不用逐段声明。
@@ -289,6 +289,7 @@ Word 正文默认以 Markdown 风格文本返回；**PDF 返回文本层**（页
 | --- | --- |
 | `body` | 正文段落（**不含标题**；表格内的段落也算正文） |
 | `headings` | 标题段落（按 `pStyle` 识别 Heading1–9 / 标题 1 / 1，或 `outlineLvl`） |
+| `heading1`–`heading9` | **指定一级标题**（也认 `h2`、`标题2`），如 `"heading2"` 只命中二级标题 |
 | `table` | 表格内的段落 |
 | `all` | 全部段落 |
 
@@ -556,7 +557,7 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `path` | string | ✅ | 文件路径。必须为 .docx（旧 .doc 先用 office_convert 转 .docx）。 |
-| `ops` | array<object> | ✅ | 操作列表，逐项含 `op` 与各自参数：`replace_text`(`find`/`replace`/`limit`)、`set_paragraph`(`text`+定位)、`set_style`(角色 `scope` = all/body/headings/table，或 `from`-`to`、`paragraph`/`match`)；`set_numbering`(多级自动编号，`style` + `linkToHeading`)；表格 `set_table`(含 `cellMargins`)、`insert_table_row`/`delete_table_row`、`insert_table_column`/`delete_table_column`(`table` 序号 + `at`/`count`)、`merge_table_cells`/`unmerge_table_cells`(range 如 "A1:B2")；`insert_paragraph`(`text`/`heading`/`position`)、`delete_paragraph`(定位) |
+| `ops` | array<object> | ✅ | 操作列表，逐项含 `op` 与各自参数：`replace_text`(`find`/`replace`/`limit`)、`set_paragraph`(`text`+定位)、`set_style`(角色 `scope` = all/body/headings/heading1–heading9/table（`headingN` 也认 `hN`、`标题N`），或 `from`-`to`、`paragraph`/`match`)；`set_numbering`(多级自动编号，`style` + `linkToHeading`)；表格 `set_table`(含 `cellMargins`)、`insert_table_row`/`delete_table_row`、`insert_table_column`/`delete_table_column`(`table` 序号 + `at`/`count`)、`merge_table_cells`/`unmerge_table_cells`(range 如 "A1:B2")；`insert_paragraph`(`text`/`heading`/`position`)、`delete_paragraph`(定位) |
 
 ### `office_write_xlsx`
 
