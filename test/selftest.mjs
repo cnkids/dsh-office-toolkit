@@ -2528,6 +2528,47 @@ await t('依赖: 解析器故障经真实 import 失败链路也包成 DSH_RESOL
   return '两种形态经 loadCore 全链路都给出 DSH_RESOLVER_BUG';
 });
 
+await t('依赖: DSH 解析缺陷下 xlsx 读取自动回退 SheetJS(office_read / office_query 仍可用)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const buf = await readFile(xlsxPath);
+  const brokenExcel = async () => {
+    throw Object.assign(new Error('createRequire.resolve.paths is not a function or its return value is not iterable'), { code: 'DSH_RESOLVER_BUG' });
+  };
+  // ① ExcelJS 抛 DSH_RESOLVER_BUG → 回退 SheetJS,meta 归一成与 ExcelJS 一致(有 sheetNames)
+  const r = await office.readXlsxWorkbook(buf, {}, brokenExcel);
+  if (r.meta.via !== 'sheetjs') throw new Error('未标注回退来源: ' + r.meta.via);
+  if (r.meta.kind !== 'xlsx' || r.meta.sheets !== r.meta.sheetNames.length) throw new Error('meta 形状未与 ExcelJS 对齐: ' + JSON.stringify(r.meta));
+  if (!r.meta.sheetNames.includes('销售明细')) throw new Error('回退后 sheetNames 归一失败: ' + JSON.stringify(r.meta.sheetNames));
+  if (!r.content.includes('键盘')) throw new Error('回退后内容缺失: ' + r.content.slice(0, 120));
+  // ② 非宿主缺陷的错误(如坏文件)不被回退吞掉,原样透传
+  const other = new Error('bad file');
+  const thrown = await office.readXlsxWorkbook(buf, {}, async () => { throw other; }).then(
+    () => new Error('普通错误被吞'),
+    (e) => (e === other ? null : new Error('错误被改写: ' + e))
+  );
+  if (thrown) throw thrown;
+  // ③ 正常环境(ExcelJS 可用)仍走 ExcelJS
+  const ok = await office.readXlsxWorkbook(buf, {});
+  if (ok.meta.via !== 'exceljs') throw new Error('正常环境未走 ExcelJS: ' + ok.meta.via);
+  return 'DSH_RESOLVER_BUG 时回退 SheetJS 可用,普通错误不被吞,正常环境仍走 ExcelJS';
+});
+
+await t('依赖: 回退路径下 office_query 数据源与 range 行窗口行为对齐', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const buf = await readFile(xlsxPath);
+  // office_query 的数据源:SheetJS 矩阵形状与 ExcelJS 版兼容(sheets/sheetNames/matrix/name)
+  const m = await legacy.readMatrixSheets(buf, 'xlsx', { maxRows: 200000, maxCols: 200 });
+  if (!m.sheetNames.includes('销售明细') || !Array.isArray(m.sheets)) throw new Error('SheetJS 矩阵形状异常');
+  const first = m.sheets.find((s) => s.name === '销售明细');
+  const firstInfo = first ? { name: first.name, rows: first.matrix?.length } : null;
+  if (!first || !Array.isArray(first.matrix) || first.matrix.length < 3) throw new Error('矩阵内容异常: ' + JSON.stringify(firstInfo));
+  // range 行窗口:回退路径(SheetJS)与 ExcelJS 版一致 —— A1:B3 只到第三行(表头+键盘+鼠标),不含第四行显示器
+  const r = await legacy.readLegacySpreadsheet(buf, 'xlsx', { range: 'A1:B3' });
+  if (!r.content.includes('键盘')) throw new Error('range 起始行解析失败: ' + r.content.slice(0, 80));
+  if (r.content.includes('显示器')) throw new Error('range 结束行未生效: ' + r.content.slice(0, 120));
+  return 'SheetJS 矩阵与 range 行窗口与 ExcelJS 语义一致';
+});
+
 await t('依赖: 加载时自检能列出缺失依赖(本机应为空)', async () => {
   const missing = missingDeps();
   if (missing.length) throw new Error('本机缺依赖: ' + missing.join(', '));
