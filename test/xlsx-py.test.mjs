@@ -71,6 +71,16 @@ function sameList(actual, expected, label) {
   if (a !== e) throw new Error(`${label} 不符: ${a} != ${e}`);
 }
 
+// 没有可用解释器(如精简 CI 镜像)时整套跳过,而不是 24 条一起误报失败
+let pyReady = false;
+try {
+  await py.resolvePython();
+  pyReady = true;
+} catch (err) {
+  console.log(`跳过: 本机没有装 openpyxl 的 Python(${err.message.split('\n')[0]})`);
+}
+
+if (pyReady) {
 // ---------------------------------------------------------------------------
 // 解释器探测
 // ---------------------------------------------------------------------------
@@ -626,6 +636,10 @@ await t('工具层: opEditXlsx 故障下也能改并带说明', async () => {
 // ---------------------------------------------------------------------------
 // 汇总
 // ---------------------------------------------------------------------------
+} else {
+  console.log('\n兜底后端用例已跳过(需 Python 3.8+ 与 openpyxl)');
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} 通过`);
 for (const r of failed) console.log(`✗ ${r.name}: ${r.detail}`);
