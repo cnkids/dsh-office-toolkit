@@ -14,6 +14,7 @@ coverage/
 test/out/
 test/out-converters/
 test/out-plugin/
+test/out-py/
 
 # SonarQube(配置与分析产物不入库)
 sonar-project.properties
@@ -24,6 +25,10 @@ sonar-project.properties
 AGENTS.md
 .agents/
 .superpowers/
+
+# Python 字节码(openpyxl 兜底执行器)
+__pycache__/
+*.pyc
 
 # 系统 / 编辑器
 .DS_Store

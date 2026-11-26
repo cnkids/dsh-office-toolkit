@@ -157,7 +157,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 **某份文件读不出来？** 插件已按**真实内容**判断格式：非标准 zip（条目名含反斜杠）、改过后缀的文件（`.doc` 里其实是 docx、`.xlsx` 里其实是 CSV 等）都会自动按实际格式读取并给出提示。若报 `BAD_CONTAINER`，错误信息会列出文件里的实际条目，便于判断它到底是什么。详见[用法与参数](docs/usage.md#读取兼容性)。
 
-**`.xlsx` 读写报 `createRequire.resolve.paths is not a function` 或 `Cannot find module 'process/'`？** 这是 **DSH 0.1.6-alpha.1 / .2 的模块解析缺陷**，不是插件缺依赖 —— 重装、重启都没用。**读取侧插件已绕开**：`office_read` / `office_query` 读 `.xlsx` 会自动回退到 SheetJS（零依赖、不走触发缺陷的依赖链），不受该缺陷影响，结果里会注明「已自动改用 SheetJS」；仍受影响的是走 ExcelJS 的**写入与编辑**（`office_write_xlsx` / `office_edit_xlsx`），报错会直接说明这一点（错误码 `DSH_RESOLVER_BUG`），不再误导你重装依赖；`.csv` / `.docx` 正常。DSH 侧分析见 [discussions/7377](https://github.com/deepseek-ai/deepseek-harness/discussions/7377#discussion-10858263)。
+**`.xlsx` 读写报 `createRequire.resolve.paths is not a function` 或 `Cannot find module 'process/'`？** 这是 **DSH 0.1.6-alpha.1 / .2 的模块解析缺陷**，不是插件缺依赖 —— 重装、重启都没用。**插件已把 xlsx 读写都绕开**：读取（`office_read` / `office_query`）自动回退 SheetJS，写入 / 编辑（`office_write_xlsx` / `office_edit_xlsx`）自动回退本机 **openpyxl**，结果里会注明回退到了哪个后端（`已自动改用 SheetJS` / `已改用 openpyxl …`），回退产物都会先读回自校验。openpyxl 兜底需要本机 Python ≥ 3.8 且装好 `openpyxl`（`pip3 install openpyxl`，或用 `DSH_OFFICE_PYTHON` 指定解释器）；缺了会报 `PY_XLSX_UNAVAILABLE` 并给出安装命令，不会写出半截文件。回退到 openpyxl 时该文件原有的图表会被丢弃（openpyxl 不支持保留图表，本次新加的 `add_chart` 不受影响），含图片的工作簿还需要 Pillow。`.csv` / `.docx` 本来就不受影响。DSH 侧分析见 [discussions/7377](https://github.com/deepseek-ai/deepseek-harness/discussions/7377#discussion-10858263)。
 
 **几万行的表怎么统计？** 用 `office_query`，它在文件内算完只回结论，不需要把整张表读进上下文。例如按地区求和、按金额倒序取前 20、只看某段时间的数据，都是一次调用；先不带条件跑一次还能拿到每列的类型、空值、去重数与高频值（表结构画像）。跨文件 join、透视表、统计建模这类插件覆盖不了的，再照常写脚本。
 
@@ -190,6 +190,7 @@ DSH 的工具注册**没有优先级设置**，模型只依据每个工具的 `d
 
 | 版本 | 变更 |
 | --- | --- |
+| **0.3.34** | 修 DSH 解析缺陷下 `.xlsx` 写不了：`office_write_xlsx` / `office_edit_xlsx` 命中 `DSH_RESOLVER_BUG` 时自动回退本机 **openpyxl**（解释器要求 3.8+ 且带 openpyxl，仍可选 `DSH_OFFICE_PYTHON` 指定），值编码 / 样式 / 条件格式 / 数据验证仍在 JS 侧校验，子进程只执行落盘并在换名替换前读回自校验（工作表名与行列、写入点非空），不合格就报 `PY_XLSX_VERIFY` 且目标文件不动；`add_chart` 仍在写完后用 `injectChart` 注入。回退只在 `DSH_RESOLVER_BUG` 时发生，正常环境继续走 ExcelJS。已知取舍：openpyxl 会丢原有图表、含图片的工作簿需 Pillow；新增 `test/xlsx-py.test.mjs`（35 条）覆盖解释器探测、写入与全 op 编辑、自校验拦截、子进程异常现场、门面回退 |
 | **0.3.33** | `office_read` / `office_query` 读 `.xlsx` 在 DSH 0.1.6-alpha 解析缺陷（`DSH_RESOLVER_BUG`）下**自动回退到 SheetJS**：SheetJS 零依赖、不走触发缺陷的 readable-stream 链，读取不再受影响（结果注明已改用 SheetJS，meta 形状与 ExcelJS 路径保持一致）；回退路径补齐 range 行窗口与矩阵形状对齐。仍受影响的是写入/编辑（`office_write_xlsx` / `office_edit_xlsx`），报错文案同步更新为「读取已绕开、写仍受影响」 |
 | **0.3.32** | 修 `style.headings` 按级配置失效：此前 `normalizeStyleSpec` 的白名单会丢弃 headings 里的非 table 键，导致标题样式从未写入（字号看似生效实为 docx 内置默认值）。现在 headings 支持「通用 + 按级覆盖」两种写法，键名兼容 `heading1`–`heading9` / `h1`–`h9` / `标题1`–`9` / `1`–`9`，未被级键覆盖的属性退回通用部分；`set_style` 的 `scope` 新增 `heading1`–`heading9`（也认 `h2`、`标题2`），可只改某一级标题 |
 | **0.3.31** | 命中 DSH 0.1.6-alpha.1 / .2 的模块解析缺陷（xlsx 路径全失败）时不再误报「缺依赖」，改为说明这是宿主缺陷并给出 DSH 侧报告链接（新错误码 `DSH_RESOLVER_BUG`）；README 补一条已知问题 |

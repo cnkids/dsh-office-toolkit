@@ -23,7 +23,7 @@ npm run coverage   # 同上并统计覆盖率，写出 coverage/lcov.info
 export SONAR_TOKEN=<token> && sonar-scanner   # 会读取 coverage/lcov.info
 ```
 
-当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点，整体覆盖率 95.0%、新代码覆盖率 91.6%（门槛 80%），质量门通过。认知复杂度按 SonarQube 推荐阈值控制在 15 以内。
+当前 0 缺陷 / 0 漏洞 / 0 代码异味 / 0 安全热点、质量门通过（新增违规 0、新代码覆盖率门槛 80% 达标）。`lib/core/xlsx_py_exec.py` 是 openpyxl 兜底执行器，lcov 只统计 JS，故它在 `sonar.coverage.exclusions` 里（仍参与缺陷与复杂度分析）。认知复杂度按 SonarQube 推荐阈值控制在 15 以内。
 
 ## 随包第三方代码（`vendor/`）
 

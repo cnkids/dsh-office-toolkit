@@ -452,6 +452,7 @@ Word 家族（`doc` / `docx` / `rtf` / `odt` / `html` / `txt` / `md`）与表格
 - `javascript:` / `data:` / `vbscript:` / `file:` 链接在写入 `.docx` 时会降级为纯文本。
 - 写入 `.xlsx` / `.docx` / `.odt` 时会校验输出必须是真正的 OOXML（`PK` 头），否则中止并报 `BAD_OUTPUT_FORMAT` —— 不会留下「扩展名是 Office、内容却是文本」的假文件。
 - `.tsv` 按制表符写出，`.csv` 按逗号写出。
+- ExcelJS 因 DSH 解析缺陷不可用时，`.xlsx` 读写会自动回退（读走 SheetJS，写 / 编辑走本机 openpyxl）。openpyxl 兜底要求本机 Python ≥ 3.8 且已装 `openpyxl`（`pip3 install openpyxl`，或用 `DSH_OFFICE_PYTHON` 指定解释器）；回退时该工作簿**原有图表会被丢弃**（本次新加的 `add_chart` 不受影响），含图片的工作簿还需要 Pillow。
 
 ## 读取排版格式（行文规则比对）
 

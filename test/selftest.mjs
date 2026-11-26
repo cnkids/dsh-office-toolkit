@@ -2514,7 +2514,7 @@ await t('依赖: 解析器故障经真实 import 失败链路也包成 DSH_RESOL
     ["throw new TypeError('createRequire.resolve.paths is not a function or its return value is not iterable');",
       'resolve.paths is not a function'],
   ];
-  for (const [src, needle] of cases) {
+  for (const [src, needle] of cases) { // NOSONAR: 逐例顺序跑,便于失败时定位
     const spec = 'data:text/javascript,' + encodeURIComponent(src);
     const mod = lazyModule(spec, '读写 .xlsx', ['go']);
     try {
